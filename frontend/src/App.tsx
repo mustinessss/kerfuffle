@@ -1,366 +1,177 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
-import './App.css'
+import { useMemo, useState } from "react";
+import "./styles.css";
 
-type LeaderboardParticipant = {
-  registration_number: string
-  place: number
-  total_points: number
-  stations_completed: number
-  stations_total: number
-}
+type Tab = "overview" | "participants" | "stations" | "leaderboard";
 
-type LeaderboardResponse = {
-  event: {
-    id: number
-    name: string
-    event_date: string
-  }
-  stations_total: number
-  participants: LeaderboardParticipant[]
-}
+const stations = [
+  { id: "01", name: "Arrival & welcome", wing: "East wing", detail: "Check-in, identity and first impressions", min: 0, max: 10, visited: 42, color: "tomato", symbol: "✳" },
+  { id: "02", name: "The nest", wing: "East wing", detail: "A small challenge about finding your place", min: 0, max: 10, visited: 35, color: "ochre", symbol: "◎" },
+  { id: "03", name: "Common ground", wing: "Central hall", detail: "Build something together", min: 0, max: 5, visited: 28, color: "teal", symbol: "⌘" },
+  { id: "04", name: "Quiet signals", wing: "West wing", detail: "Notice what others might miss", min: 0, max: 10, visited: 19, color: "ink", symbol: "· · ·" },
+  { id: "05", name: "The exchange", wing: "West wing", detail: "Trade ideas, stories and points", min: 0, max: 10, visited: 14, color: "clay", symbol: "↗" },
+  { id: "06", name: "The last room", wing: "North wing", detail: "One final moment before the finish", min: 0, max: 5, visited: 8, color: "pale", symbol: "✺" },
+];
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
+const people = [
+  { number: "014", name: "Alex Morgan", points: 38, progress: "6 / 6" },
+  { number: "027", name: "Jamie Rivera", points: 35, progress: "6 / 6" },
+  { number: "008", name: "Taylor Kim", points: 35, progress: "5 / 6" },
+  { number: "031", name: "Sam Parker", points: 29, progress: "5 / 6" },
+  { number: "019", name: "Robin Ellis", points: 24, progress: "4 / 6" },
+];
 
-function formatEventDate(value: string) {
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  }).format(new Date(`${value}T00:00:00`))
+function SunMark() {
+  return <span className="sun-mark" aria-hidden="true"><i /></span>;
 }
 
 function App() {
-  const initialEventId = new URLSearchParams(window.location.search).get('eventId') ?? ''
-  const [eventId, setEventId] = useState(initialEventId)
-  const [eventIdInput, setEventIdInput] = useState(initialEventId)
-  const [data, setData] = useState<LeaderboardResponse | null>(null)
-  const [filter, setFilter] = useState('')
-  const [error, setError] = useState('')
-  const [loadedEventId, setLoadedEventId] = useState('')
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [retryKey, setRetryKey] = useState(0)
-  const loading = Boolean(eventId && loadedEventId !== eventId)
-  const currentData =
-    data && Number(eventId) === data.event.id ? data : null
+  const [tab, setTab] = useState<Tab>("overview");
+  const [query, setQuery] = useState("");
+  const [selectedEvent, setSelectedEvent] = useState("The Marigold Gathering");
+  const [activeStation, setActiveStation] = useState("02");
 
-  useEffect(() => {
-    if (!eventId) return
+  const filteredPeople = useMemo(
+    () => people.filter((p) => `${p.name} ${p.number}`.toLowerCase().includes(query.toLowerCase())),
+    [query],
+  );
 
-    let active = true
-    let eventNotFound = false
-    const controller = new AbortController()
-
-    const loadLeaderboard = async () => {
-      try {
-        const response = await fetch(
-          `${API_BASE}/public/events/${encodeURIComponent(eventId)}/leaderboard`,
-          { signal: controller.signal },
-        )
-        if (!response.ok) {
-          if (response.status === 404) {
-            eventNotFound = true
-            throw new Error('Мероприятие не найдено. Проверьте номер и попробуйте ещё раз.')
-          }
-          throw new Error(`Не удалось загрузить таблицу (ошибка ${response.status}).`)
-        }
-
-        const result = (await response.json()) as LeaderboardResponse
-        if (active) {
-          setData(result)
-          setError('')
-          setLastUpdated(new Date())
-          setLoadedEventId(eventId)
-          eventNotFound = false
-        }
-      } catch (caught) {
-        if (active && !(caught instanceof DOMException && caught.name === 'AbortError')) {
-          setError(
-            caught instanceof TypeError
-              ? 'Сервер сейчас недоступен. Проверьте, запущен ли backend, и попробуйте ещё раз.'
-              : caught instanceof Error
-              ? caught.message
-              : 'Не удалось связаться с сервером. Попробуйте ещё раз.',
-          )
-          setLoadedEventId(eventId)
-        }
-      }
-    }
-
-    void loadLeaderboard()
-    const intervalId = window.setInterval(() => {
-      if (!eventNotFound) void loadLeaderboard()
-    }, 5000)
-
-    return () => {
-      active = false
-      controller.abort()
-      window.clearInterval(intervalId)
-    }
-  }, [eventId, retryKey])
-
-  const visibleParticipants = useMemo(() => {
-    const normalizedFilter = filter.trim().toLowerCase()
-    if (!normalizedFilter) return currentData?.participants ?? []
-    return (currentData?.participants ?? []).filter((participant) =>
-      participant.registration_number.toLowerCase().includes(normalizedFilter),
-    )
-  }, [currentData, filter])
-
-  const handleOpenEvent = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const normalizedId = eventIdInput.trim()
-    if (!/^\d+$/.test(normalizedId) || Number(normalizedId) < 1) {
-      setError('Введите положительный номер мероприятия.')
-      return
-    }
-    window.history.replaceState(null, '', `?eventId=${encodeURIComponent(normalizedId)}`)
-    setFilter('')
-    setError('')
-    setLoadedEventId('')
-    setEventId(normalizedId)
-  }
-
-  const podium = currentData?.participants.slice(0, 3) ?? []
+  const nav: { id: Tab; label: string; index: string }[] = [
+    { id: "overview", label: "Overview", index: "01" },
+    { id: "participants", label: "Participants", index: "02" },
+    { id: "stations", label: "Stations", index: "03" },
+    { id: "leaderboard", label: "Leaderboard", index: "04" },
+  ];
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="Kerfuffle — на главную">
-          <span className="brand-mark" aria-hidden="true">k</span>
-          <span>kerfuffle</span>
-        </a>
-        <div className="topbar-meta">
-          <span className="live-dot" aria-hidden="true" />
-          <span>Результаты обновляются автоматически</span>
+      <div className="topline">
+        <div className="topline-brand"><span className="tiny-flower">✳</span> KERFUFFLE <span className="topline-muted">— EVENT FIELDNOTES</span></div>
+        <div className="topline-center">LIVE EVENT · 06 NOVEMBER 2026</div>
+        <div className="topline-right"><span className="live-dot" /> OPERATIONS DESK</div>
+      </div>
+
+      <header className="hero">
+        <div className="hero-copy">
+          <div className="eyebrow">THE GATHERING COLLECTION · NO. 001</div>
+          <h1>MAKE ROOM<br />FOR <em>PLAY</em><span className="period">.</span></h1>
+          <p className="hero-subtitle">A day of small adventures, generous ideas and unexpected connections</p>
         </div>
+        <aside className="hero-aside">
+          <div className="hero-art">
+            <SunMark />
+            <div className="art-caption">CURATED FOR<br /><strong>GOOD COMPANY</strong><small>people · places · possibility</small></div>
+          </div>
+          <div className="hero-meta">
+            <div><span>ON VIEW</span><strong>TODAY → ALWAYS</strong></div>
+            <div><span>FULL VISIT</span><strong>≈ 42 MINUTES</strong></div>
+          </div>
+        </aside>
       </header>
 
-      <section className="hero">
-        <div className="hero-copy">
-          <span className="eyebrow"><span className="eyebrow-line" />ТАБЛИЦА РЕЗУЛЬТАТОВ</span>
-          <h1>Каждый балл<br /><span>имеет значение.</span></h1>
-          <p>Следите за результатами и прогрессом участников в реальном времени.</p>
-        </div>
-        <div className="event-picker">
-          <div className="picker-label"><span className="picker-icon">↗</span>ОТКРЫТЬ МЕРОПРИЯТИЕ</div>
-          <form onSubmit={handleOpenEvent}>
-            <label className="sr-only" htmlFor="event-id">Номер мероприятия</label>
-            <input
-              id="event-id"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              placeholder="Например, 12"
-              value={eventIdInput}
-              onChange={(event) => setEventIdInput(event.target.value)}
-            />
-            <button type="submit">Показать <span aria-hidden="true">→</span></button>
-          </form>
-          <span className="picker-hint">Номер мероприятия находится в ссылке организатора</span>
-        </div>
-      </section>
+      <div className="visit-strip">
+        <span className="strip-label">YOUR VISIT</span>
+        <div className="progress-block"><div className="progress-segments">{stations.map((s, i) => <i key={s.id} className={i < 2 ? "filled" : ""} />)}</div><span>2 OF 6 ROOMS</span></div>
+        <span className="strip-note">take your time — we'll keep your place</span>
+      </div>
 
-      {eventId && currentData && (
-        <>
-          <section className="event-heading">
-            <div>
-              <span className="section-kicker">МЕРОПРИЯТИЕ №{currentData.event.id}</span>
-              <h2>{currentData.event.name}</h2>
-              <p>{formatEventDate(currentData.event.event_date)}</p>
-            </div>
-            <div className="refresh-status">
-              <span className="refresh-icon" aria-hidden="true">↻</span>
-              <span>
-                <strong>Обновление каждые 5 сек.</strong>
-                <small>{lastUpdated ? `Последнее: ${lastUpdated.toLocaleTimeString('ru-RU')}` : 'Загружаем...'}</small>
-              </span>
-            </div>
-          </section>
-
-          <section className="summary-grid" aria-label="Сводка результатов">
-            <article className="summary-card">
-              <span className="summary-icon people-icon" aria-hidden="true">◎</span>
-              <span className="summary-label">УЧАСТНИКИ</span>
-              <strong>{currentData.participants.length}</strong>
-              <span className="summary-note">в таблице результатов</span>
-            </article>
-            <article className="summary-card">
-              <span className="summary-icon station-icon" aria-hidden="true">⌁</span>
-              <span className="summary-label">ПЛОЩАДКИ</span>
-              <strong>{currentData.stations_total}</strong>
-              <span className="summary-note">в программе события</span>
-            </article>
-            <article className="summary-card highlight-card">
-              <span className="summary-icon winner-icon" aria-hidden="true">✳</span>
-              <span className="summary-label">ЛИДЕР</span>
-              <strong>{podium[0]?.registration_number ?? '—'}</strong>
-              <span className="summary-note">
-                {podium[0] ? `${podium[0].total_points} баллов` : 'пока без оценок'}
-              </span>
-            </article>
-          </section>
-
-          {podium.length > 0 && (
-            <section className="podium-section" aria-label="Лидеры мероприятия">
-              <div className="section-title-row">
-                <div>
-                  <span className="section-kicker">ВПЕРЕДИ ВСЕХ</span>
-                  <h2>Лидеры</h2>
-                </div>
-                <span className="podium-caption">По сумме баллов</span>
-              </div>
-              <div className="podium-grid">
-                {[1, 0, 2].map((index) => {
-                  const participant = podium[index]
-                  if (!participant) return <div className="podium-empty" key={index} />
-                  return (
-                    <article
-                      className={`podium-card podium-${participant.place <= 3 ? participant.place : 'other'}`}
-                      key={participant.registration_number}
-                    >
-                      <span className="podium-medal" aria-hidden="true">
-                        {participant.place === 1 ? '✳' : participant.place === 2 ? '◆' : '●'}
-                      </span>
-                      <span className="podium-rank">МЕСТО {participant.place}</span>
-                      <strong>№ {participant.registration_number}</strong>
-                      <span className="podium-points">{participant.total_points} <small>баллов</small></span>
-                      <span className="podium-progress">
-                        {participant.stations_completed} / {participant.stations_total} площадок
-                      </span>
-                    </article>
-                  )
-                })}
-              </div>
-            </section>
-          )}
-
-          <section className="results-section">
-            <div className="section-title-row results-title-row">
-              <div>
-                <span className="section-kicker">ПОЛНЫЙ РЕЗУЛЬТАТ</span>
-                <h2>Рейтинг участников</h2>
-              </div>
-              <label className="search-field">
-                <span aria-hidden="true">⌕</span>
-                <span className="sr-only">Поиск по номеру</span>
-                <input
-                  type="search"
-                  placeholder="Найти участника"
-                  value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
-                />
-              </label>
-            </div>
-
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">МЕСТО</th>
-                    <th scope="col">УЧАСТНИК</th>
-                    <th scope="col">БАЛЛЫ</th>
-                    <th scope="col">ПРОГРЕСС</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleParticipants.map((participant) => {
-                    const progress = participant.stations_total
-                      ? Math.round((participant.stations_completed / participant.stations_total) * 100)
-                      : 0
-                    return (
-                      <tr key={participant.registration_number}>
-                        <td>
-                          <span className={`rank-badge ${participant.place <= 3 ? `rank-${participant.place}` : ''}`}>
-                            {String(participant.place).padStart(2, '0')}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="participant-number">№ {participant.registration_number}</span>
-                          <span className="participant-caption">Номер участника</span>
-                        </td>
-                        <td><strong className="points-value">{participant.total_points}</strong><span className="points-unit">баллов</span></td>
-                        <td>
-                          <div className="progress-cell">
-                            <span>{participant.stations_completed} из {participant.stations_total}</span>
-                            <div
-                              className="progress-track"
-                              role="progressbar"
-                              aria-label={`Пройдено площадок: ${participant.stations_completed} из ${participant.stations_total}`}
-                              aria-valuemin={0}
-                              aria-valuemax={participant.stations_total}
-                              aria-valuenow={participant.stations_completed}
-                            >
-                              <span style={{ width: `${progress}%` }} />
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                  {visibleParticipants.length === 0 && (
-                    <tr>
-                      <td className="empty-table" colSpan={4}>
-                        {currentData.participants.length === 0
-                          ? 'Участники появятся здесь после регистрации.'
-                          : 'По этому номеру участников не найдено.'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="table-footer">
-              <span>Показано {visibleParticipants.length} из {currentData.participants.length} участников</span>
-              <span>Все результаты доступны только для чтения</span>
-            </div>
-          </section>
-        </>
-      )}
-
-      {loading && !currentData && (
-        <div className="notice-card" role="status">
-          <span className="loading-spinner" aria-hidden="true" />
-          Загружаем таблицу результатов...
-        </div>
-      )}
-
-      {error && (
-        <div className="notice-card error-card" role="alert">
-          <span aria-hidden="true">!</span>
-          <div><strong>Не удалось открыть рейтинг</strong><p>{error}</p></div>
-          <button
-            type="button"
-            onClick={() => {
-              setEventId(eventIdInput.trim())
-              setLoadedEventId('')
-              setRetryKey((current) => current + 1)
-            }}
-          >
-            Повторить
-          </button>
-        </div>
-      )}
-
-      {!eventId && !loading && !error && (
-        <div className="notice-card welcome-card">
-          <span className="welcome-icon" aria-hidden="true">↳</span>
-          <div>
-            <strong>Всё готово к старту</strong>
-            <p>Введите номер мероприятия выше, чтобы открыть его таблицу результатов.</p>
+      <div className="workspace">
+        <aside className="sidebar">
+          <div className="sidebar-label">THE COLLECTION</div>
+          <div className="event-picker">
+            <span>SELECTED EVENT</span>
+            <select value={selectedEvent} onChange={(e) => setSelectedEvent(e.target.value)}>
+              <option>The Marigold Gathering</option>
+              <option>Autumn Assembly</option>
+              <option>Open Studio Night</option>
+            </select>
           </div>
-        </div>
-      )}
+          <nav className="main-nav" aria-label="Main navigation">
+            {nav.map((item) => (
+              <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => setTab(item.id)}>
+                <span>{item.index}</span>{item.label}<b>↗</b>
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="sidebar-label">FIELD STATUS</div>
+            <div className="status-row"><span className="live-dot" /> All systems in bloom</div>
+            <div className="sidebar-foot">KERFUFFLE OFFICE<br />ISSUE 001 / 2026</div>
+          </div>
+        </aside>
 
-      <footer className="footer">
-        <a className="brand footer-brand" href="/">
-          <span className="brand-mark" aria-hidden="true">k</span>
-          <span>kerfuffle</span>
-        </a>
-        <span>Участие — это уже победа.</span>
-        <span>© Kerfuffle 2026</span>
-      </footer>
+        <section className="content">
+          <div className="content-heading">
+            <div>
+              <div className="eyebrow">WELCOME BACK · ORGANIZER VIEW</div>
+              <h2>{nav.find((n) => n.id === tab)?.label}<span className="period">.</span></h2>
+            </div>
+            <button className="outline-button" onClick={() => setTab("leaderboard")}>VIEW LIVE BOARD <span>↗</span></button>
+          </div>
+
+          {tab === "overview" && <>
+            <section className="stats-grid">
+              <article className="stat-card stat-accent"><span>REGISTERED GUESTS</span><strong>128</strong><small>+ 18 since doors opened</small></article>
+              <article className="stat-card"><span>POINTS AWARDED</span><strong>2,418</strong><small>across all six rooms</small></article>
+              <article className="stat-card"><span>ROOMS COMPLETED</span><strong>04<span className="stat-unit">/ 06</span></strong><small>average guest progress</small></article>
+              <article className="stat-card"><span>TIME TOGETHER</span><strong>42<span className="stat-unit">m</span></strong><small>average first visit</small></article>
+            </section>
+
+            <div className="section-title"><div><span className="eyebrow">EXPLORE THE FLOOR</span><h3>Rooms & stations</h3></div><span className="section-count">06 TOTAL ↘</span></div>
+            <div className="station-grid">
+              {stations.map((station) => (
+                <button key={station.id} className={`station-card ${activeStation === station.id ? "selected" : ""}`} onClick={() => { setActiveStation(station.id); setTab("stations"); }}>
+                  <div className="station-top"><span>ROOM {station.id}</span><span>{station.wing.toUpperCase()}</span><span className="view-status"><i /> {station.id === "01" ? "VISITED" : "ON VIEW"}</span></div>
+                  <div className={`station-art ${station.color}`}><span className="station-number">{station.id}</span><span className="station-symbol">{station.symbol}</span></div>
+                  <div className="station-info"><h4>{station.name}</h4><p>{station.detail}</p></div>
+                  <div className="station-foot"><span>◷ &nbsp;{station.visited} VISITS</span><span>OPEN ROOM ↗</span></div>
+                </button>
+              ))}
+            </div>
+
+            <div className="section-title leaderboard-title"><div><span className="eyebrow">A LITTLE FRIENDLY COMPETITION</span><h3>Leading the way</h3></div><button className="text-button" onClick={() => setTab("leaderboard")}>FULL LEADERBOARD ↗</button></div>
+            <Leaderboard rows={people.slice(0, 3)} />
+          </>}
+
+          {tab === "participants" && <>
+            <div className="panel-intro"><p>Every guest has their own route through the rooms. Find a person to view their registration and progress.</p><button className="solid-button" onClick={() => alert("Connect this action to POST /events/{event_id}/participants")}>+ REGISTER GUEST</button></div>
+            <div className="search-row"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or registration number…" /><span>{filteredPeople.length} GUESTS</span></div>
+            <div className="people-list">{filteredPeople.map((p) => <div className="person-row" key={p.number}><span className="person-number">#{p.number}</span><strong>{p.name}</strong><span>{p.progress} ROOMS</span><b>{p.points} PTS</b></div>)}</div>
+          </>}
+
+          {tab === "stations" && <>
+            <div className="station-detail">
+              <div className={`detail-art ${stations.find(s => s.id === activeStation)?.color || "tomato"}`}><span>{stations.find(s => s.id === activeStation)?.symbol}</span><small>ROOM {activeStation}</small></div>
+              <div className="detail-copy"><div className="eyebrow">STATION CONFIGURATION</div><h3>{stations.find(s => s.id === activeStation)?.name}</h3><p>{stations.find(s => s.id === activeStation)?.detail}</p><div className="scale-row"><span>SCORING SCALE</span><strong>0 — {stations.find(s => s.id === activeStation)?.max} POINTS · STEP 1</strong></div><div className="scale-row"><span>VISITS RECORDED</span><strong>{stations.find(s => s.id === activeStation)?.visited}</strong></div><button className="solid-button" onClick={() => alert("Station editing will be connected to the API.")}>EDIT STATION ↗</button></div>
+            </div>
+            <div className="section-title"><div><span className="eyebrow">ALL LOCATIONS</span><h3>Choose a room</h3></div></div>
+            <div className="station-tabs">{stations.map(s => <button className={activeStation === s.id ? "chosen" : ""} onClick={() => setActiveStation(s.id)} key={s.id}>{s.id} / {s.name}</button>)}</div>
+          </>}
+
+          {tab === "leaderboard" && <>
+            <div className="leaderboard-banner"><SunMark /><div><span className="eyebrow">THE CURRENT PICTURE</span><strong>Every point tells a story.</strong><small>Ranked by total points · ties share the same place</small></div><span className="live-pill"><i /> LIVE</span></div>
+            <div className="search-row"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a guest…" /><span>UPDATED JUST NOW</span></div>
+            <Leaderboard rows={filteredPeople} expanded />
+          </>}
+          <footer className="content-footer"><span>KERFUFFLE © 2026</span><span>MADE FOR GATHERING, NOT HURRYING.</span><span>ISSUE 001 · {selectedEvent.toUpperCase()}</span></footer>
+        </section>
+      </div>
     </main>
-  )
+  );
 }
 
-export default App
+function Leaderboard({ rows, expanded = false }: { rows: typeof people; expanded?: boolean }) {
+  let lastPoints = -1;
+  let rank = 0;
+  return <div className="leaderboard">
+    <div className="leader-head"><span>PLACE</span><span>GUEST</span><span>ROOMS VISITED</span><span>TOTAL POINTS</span></div>
+    {rows.map((p, i) => {
+      if (p.points !== lastPoints) rank = i + 1;
+      lastPoints = p.points;
+      return <div className="leader-row" key={p.number}><strong className="rank">{String(rank).padStart(2, "0")}</strong><span className="leader-name">{p.name}<small>REG. #{p.number}</small></span><span className="leader-progress">{p.progress}</span><strong className="leader-points">{p.points}<small>PTS</small></strong></div>;
+    })}
+    {rows.length === 0 && <div className="empty-state">No guests match that search yet.</div>}
+    {!expanded && <div className="leader-note">A shared place is awarded when totals are equal. Time is never a tie-breaker.</div>}
+  </div>;
+}
+
+export default App;
