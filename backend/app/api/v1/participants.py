@@ -14,7 +14,8 @@ from app.db.session import get_db
 
 
 router = APIRouter(tags=["Participants"])
-REGISTRATION_NUMBER_WIDTH = 4
+REGISTRATION_NUMBER_WIDTH = 6
+MAX_REGISTRATIONS_PER_EVENT = 999_999
 
 
 class PersonCreate(BaseModel):
@@ -82,6 +83,78 @@ def participant_response(
 
 def _postgres_error_code(error: IntegrityError) -> str | None:
     return getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
+
+
+def _next_registration_number(registration_count: int) -> str:
+    if registration_count >= MAX_REGISTRATIONS_PER_EVENT:
+        raise HTTPException(
+            status_code=409,
+            detail="The event has reached its participant limit",
+        )
+    return f"{registration_count + 1:0{REGISTRATION_NUMBER_WIDTH}d}"
+
+
+def register_participant_record(
+    event_id: int,
+    payload: ParticipantCreate,
+    session: Session,
+) -> dict[str, int | str | datetime | None]:
+    event = session.scalar(select(Event).where(Event.id == event_id).with_for_update())
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if payload.person_id is not None:
+        person = session.get(Person, payload.person_id)
+        if person is None:
+            raise HTTPException(status_code=404, detail="Person not found")
+    else:
+        if payload.person is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide exactly one of person_id or person",
+            )
+        person = Person(**payload.person.model_dump())
+        session.add(person)
+        session.flush()
+
+    existing = session.scalar(
+        select(EventParticipant.id).where(
+            EventParticipant.event_id == event_id,
+            EventParticipant.person_id == person.id,
+        )
+    )
+    if existing is not None:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Person is already registered for this event",
+        )
+
+    registration_count = session.scalar(
+        select(func.count())
+        .select_from(EventParticipant)
+        .where(EventParticipant.event_id == event_id)
+    )
+    registration = EventParticipant(
+        event_id=event_id,
+        person_id=person.id,
+        registration_number=_next_registration_number(registration_count),
+        qr_token=uuid4(),
+    )
+    session.add(registration)
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        if _postgres_error_code(error) == "23505":
+            raise HTTPException(
+                status_code=409,
+                detail="Registration conflicts with an existing participant",
+            ) from error
+        raise
+
+    session.refresh(registration)
+    return participant_response(registration, person)
 
 
 @router.get("/people", summary="Найти карточки людей в мероприятии")
@@ -154,60 +227,5 @@ def register_participant(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    event = session.scalar(select(Event).where(Event.id == event_id).with_for_update())
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found")
     require_event_access(session, user, event_id, {"organizer", "registrar"})
-
-    if payload.person_id is not None:
-        person = session.get(Person, payload.person_id)
-        if person is None:
-            raise HTTPException(status_code=404, detail="Person not found")
-    else:
-        if payload.person is None:
-            raise HTTPException(
-                status_code=422,
-                detail="Provide exactly one of person_id or person",
-            )
-        person = Person(**payload.person.model_dump())
-        session.add(person)
-        session.flush()
-
-    existing = session.scalar(
-        select(EventParticipant.id).where(
-            EventParticipant.event_id == event_id,
-            EventParticipant.person_id == person.id,
-        )
-    )
-    if existing is not None:
-        session.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Person is already registered for this event",
-        )
-
-    registration_count = session.scalar(
-        select(func.count())
-        .select_from(EventParticipant)
-        .where(EventParticipant.event_id == event_id)
-    )
-    registration = EventParticipant(
-        event_id=event_id,
-        person_id=person.id,
-        registration_number=f"{registration_count + 1:0{REGISTRATION_NUMBER_WIDTH}d}",
-        qr_token=uuid4(),
-    )
-    session.add(registration)
-    try:
-        session.commit()
-    except IntegrityError as error:
-        session.rollback()
-        if _postgres_error_code(error) == "23505":
-            raise HTTPException(
-                status_code=409,
-                detail="Registration conflicts with an existing participant",
-            ) from error
-        raise
-
-    session.refresh(registration)
-    return participant_response(registration, person)
+    return register_participant_record(event_id, payload, session)

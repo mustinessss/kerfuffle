@@ -74,6 +74,9 @@ class User(Base):
     is_system_admin: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    is_organizer: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -203,9 +206,104 @@ class Score(Base):
         ID_TYPE, ForeignKey("stations.id", ondelete="RESTRICT"), nullable=False
     )
     points: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_annulled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ScoreAudit(Base):
+    __tablename__ = "score_audit"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('correction', 'annulment')",
+            name="score_audit_valid_action",
+        ),
+        CheckConstraint(
+            "btrim(reason) <> ''",
+            name="score_audit_reason_not_empty",
+        ),
+        Index("score_audit_score_created_idx", "score_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    score_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("scores.id", ondelete="RESTRICT"), nullable=False
+    )
+    changed_by_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    points_before: Mapped[int] = mapped_column(Integer, nullable=False)
+    points_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AccessCode(Base):
+    __tablename__ = "access_codes"
+    __table_args__ = (
+        CheckConstraint(
+            "(role = 'registrar' AND station_id IS NULL) OR "
+            "(role = 'station_operator' AND station_id IS NOT NULL)",
+            name="access_codes_valid_scope",
+        ),
+        ForeignKeyConstraint(
+            ["station_id", "event_id"],
+            ["stations.id", "stations.event_id"],
+            name="access_codes_station_must_belong_to_event",
+            ondelete="RESTRICT",
+        ),
+        Index("access_codes_event_idx", "event_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("events.id", ondelete="RESTRICT"), nullable=False
+    )
+    station_id: Mapped[int | None] = mapped_column(ID_TYPE)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    secret_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AccessSession(Base):
+    __tablename__ = "access_sessions"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    access_code_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("access_codes.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AccessCodeAttempt(Base):
+    __tablename__ = "access_code_attempts"
+    __table_args__ = (Index("access_code_attempts_ip_time_idx", "ip_hash", "created_at"),)
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    ip_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

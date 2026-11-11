@@ -56,10 +56,10 @@ def create_event(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    if not user.is_system_admin:
+    if not user.is_system_admin and not user.is_organizer:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="System administrator role required",
+            detail="Organizer role required",
         )
 
     event = Event(name=payload.name, event_date=payload.event_date)

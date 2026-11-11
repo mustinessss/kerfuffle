@@ -73,7 +73,14 @@ def oidc_settings(**overrides):
 
 def test_missing_oidc_config_returns_service_unavailable():
     with pytest.raises(HTTPException) as error:
-        decode_access_token("token", Settings())
+        decode_access_token(
+            "token",
+            Settings(
+                oidc_issuer=None,
+                oidc_audience=None,
+                oidc_jwks_url=None,
+            ),
+        )
 
     assert error.value.status_code == 503
 
@@ -218,3 +225,24 @@ def test_non_admin_cannot_create_event(db_session):
 
     assert error.value.status_code == 403
     assert db_session.query(Event).count() == 0
+
+
+def test_provisioned_organizer_can_create_event(db_session):
+    organizer = User(
+        auth_subject="organizer-sub",
+        display_name="Organizer",
+        is_organizer=True,
+    )
+    db_session.add(organizer)
+    db_session.commit()
+
+    response = create_event(
+        EventCreate(name="Community day", event_date="2026-11-11"),
+        organizer,
+        db_session,
+    )
+
+    assert response["name"] == "Community day"
+    access = db_session.query(EventAccess).one()
+    assert access.user_id == organizer.id
+    assert access.role == "organizer"

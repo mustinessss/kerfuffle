@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     oidc_jwks_url: str | None = None
     oidc_signing_algorithm: str = "RS256"
     oidc_bootstrap_admin_subject: str | None = None
+    access_code_hash_secret: str | None = None
+    keycloak_admin_base_url: str | None = None
+    keycloak_admin_realm: str = "kerfuffle"
+    keycloak_admin_client_id: str | None = None
+    keycloak_admin_client_secret: str | None = None
 
     @field_validator("oidc_signing_algorithm")
     @classmethod

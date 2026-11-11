@@ -25,6 +25,7 @@ def read_current_user(
         "email": user.email,
         "display_name": user.display_name,
         "is_system_admin": user.is_system_admin,
+        "is_organizer": user.is_organizer,
         "access": [
             {
                 "event_id": access.event_id,

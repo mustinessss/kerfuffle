@@ -1,177 +1,262 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { ApiError, getPublicLeaderboard, type LeaderboardResponse } from "./api";
+import { useAuth } from "./authContext";
+import { OrganizerPage, RegistrationPage, ScoringPage } from "./WorkspacePages";
 import "./styles.css";
 
-type Tab = "overview" | "participants" | "stations" | "leaderboard";
+type Page = "home" | "leaderboard" | "registration" | "scoring" | "organizer" | "callback";
 
-const stations = [
-  { id: "01", name: "Arrival & welcome", wing: "East wing", detail: "Check-in, identity and first impressions", min: 0, max: 10, visited: 42, color: "tomato", symbol: "✳" },
-  { id: "02", name: "The nest", wing: "East wing", detail: "A small challenge about finding your place", min: 0, max: 10, visited: 35, color: "ochre", symbol: "◎" },
-  { id: "03", name: "Common ground", wing: "Central hall", detail: "Build something together", min: 0, max: 5, visited: 28, color: "teal", symbol: "⌘" },
-  { id: "04", name: "Quiet signals", wing: "West wing", detail: "Notice what others might miss", min: 0, max: 10, visited: 19, color: "ink", symbol: "· · ·" },
-  { id: "05", name: "The exchange", wing: "West wing", detail: "Trade ideas, stories and points", min: 0, max: 10, visited: 14, color: "clay", symbol: "↗" },
-  { id: "06", name: "The last room", wing: "North wing", detail: "One final moment before the finish", min: 0, max: 5, visited: 8, color: "pale", symbol: "✺" },
-];
+function currentPage(): Page {
+  const path = window.location.pathname.replace(/\/+$/, "");
+  if (path === "/leaderboard") return "leaderboard";
+  if (path === "/register") return "registration";
+  if (path === "/score") return "scoring";
+  if (path === "/organizer") return "organizer";
+  if (path === "/auth/callback") return "callback";
+  return "home";
+}
 
-const people = [
-  { number: "014", name: "Alex Morgan", points: 38, progress: "6 / 6" },
-  { number: "027", name: "Jamie Rivera", points: 35, progress: "6 / 6" },
-  { number: "008", name: "Taylor Kim", points: 35, progress: "5 / 6" },
-  { number: "031", name: "Sam Parker", points: 29, progress: "5 / 6" },
-  { number: "019", name: "Robin Ellis", points: 24, progress: "4 / 6" },
-];
-
-function SunMark() {
-  return <span className="sun-mark" aria-hidden="true"><i /></span>;
+function eventIdFromUrl(): string {
+  return new URLSearchParams(window.location.search).get("eventId") ?? "";
 }
 
 function App() {
-  const [tab, setTab] = useState<Tab>("overview");
-  const [query, setQuery] = useState("");
-  const [selectedEvent, setSelectedEvent] = useState("The Marigold Gathering");
-  const [activeStation, setActiveStation] = useState("02");
+  const page = currentPage();
+  const [eventId, setEventId] = useState(eventIdFromUrl);
+  const { loading: authLoading, error: authError } = useAuth();
 
-  const filteredPeople = useMemo(
-    () => people.filter((p) => `${p.name} ${p.number}`.toLowerCase().includes(query.toLowerCase())),
-    [query],
-  );
-
-  const nav: { id: Tab; label: string; index: string }[] = [
-    { id: "overview", label: "Overview", index: "01" },
-    { id: "participants", label: "Participants", index: "02" },
-    { id: "stations", label: "Stations", index: "03" },
-    { id: "leaderboard", label: "Leaderboard", index: "04" },
-  ];
+  function openLeaderboard(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const id = eventId.trim();
+    if (!/^[1-9]\d*$/.test(id)) return;
+    window.location.href = `/leaderboard?eventId=${encodeURIComponent(id)}`;
+  }
 
   return (
-    <main className="app-shell">
-      <div className="topline">
-        <div className="topline-brand"><span className="tiny-flower">✳</span> KERFUFFLE <span className="topline-muted">— EVENT FIELDNOTES</span></div>
-        <div className="topline-center">LIVE EVENT · 06 NOVEMBER 2026</div>
-        <div className="topline-right"><span className="live-dot" /> OPERATIONS DESK</div>
-      </div>
-
-      <header className="hero">
-        <div className="hero-copy">
-          <div className="eyebrow">THE GATHERING COLLECTION · NO. 001</div>
-          <h1>MAKE ROOM<br />FOR <em>PLAY</em><span className="period">.</span></h1>
-          <p className="hero-subtitle">A day of small adventures, generous ideas and unexpected connections</p>
-        </div>
-        <aside className="hero-aside">
-          <div className="hero-art">
-            <SunMark />
-            <div className="art-caption">CURATED FOR<br /><strong>GOOD COMPANY</strong><small>people · places · possibility</small></div>
-          </div>
-          <div className="hero-meta">
-            <div><span>ON VIEW</span><strong>TODAY → ALWAYS</strong></div>
-            <div><span>FULL VISIT</span><strong>≈ 42 MINUTES</strong></div>
-          </div>
-        </aside>
+    <div className="app-shell">
+      <header className="site-header">
+        <a className="wordmark" href="/" aria-label="Kerfuffle — главная">
+          <span className="wordmark-mark" aria-hidden="true">k.</span>
+          <span>kerfuffle</span>
+        </a>
+        <nav className="header-nav" aria-label="Основная навигация">
+          <a href="/leaderboard">Рейтинг</a>
+          <a href="/organizer">Организатору <span aria-hidden="true">↗</span></a>
+        </nav>
       </header>
 
-      <div className="visit-strip">
-        <span className="strip-label">YOUR VISIT</span>
-        <div className="progress-block"><div className="progress-segments">{stations.map((s, i) => <i key={s.id} className={i < 2 ? "filled" : ""} />)}</div><span>2 OF 6 ROOMS</span></div>
-        <span className="strip-note">take your time — we'll keep your place</span>
-      </div>
+      {page === "home" && (
+        <main className="home-page">
+          <section className="home-intro">
+            <p className="eyebrow">ВСТРЕЧАЙТЕСЬ · ИГРАЙТЕ · ОТКРЫВАЙТЕ</p>
+            <h1>Хорошие события<br />случаются <em>вместе.</em></h1>
+            <p className="intro-copy">Регистрация, задания на площадках и результаты — в одном месте.</p>
+          </section>
 
-      <div className="workspace">
-        <aside className="sidebar">
-          <div className="sidebar-label">THE COLLECTION</div>
-          <div className="event-picker">
-            <span>SELECTED EVENT</span>
-            <select value={selectedEvent} onChange={(e) => setSelectedEvent(e.target.value)}>
-              <option>The Marigold Gathering</option>
-              <option>Autumn Assembly</option>
-              <option>Open Studio Night</option>
-            </select>
-          </div>
-          <nav className="main-nav" aria-label="Main navigation">
-            {nav.map((item) => (
-              <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => setTab(item.id)}>
-                <span>{item.index}</span>{item.label}<b>↗</b>
-              </button>
-            ))}
-          </nav>
-          <div className="sidebar-bottom">
-            <div className="sidebar-label">FIELD STATUS</div>
-            <div className="status-row"><span className="live-dot" /> All systems in bloom</div>
-            <div className="sidebar-foot">KERFUFFLE OFFICE<br />ISSUE 001 / 2026</div>
-          </div>
-        </aside>
-
-        <section className="content">
-          <div className="content-heading">
-            <div>
-              <div className="eyebrow">WELCOME BACK · ORGANIZER VIEW</div>
-              <h2>{nav.find((n) => n.id === tab)?.label}<span className="period">.</span></h2>
+          <section className="action-list" aria-label="Действия участника">
+            <a className="action-card action-register" href="/register">
+              <span className="action-number">01</span>
+              <span className="action-copy"><strong>Регистрация участника</strong><small>Получите номер для участия в событии</small></span>
+              <span className="action-arrow" aria-hidden="true">↗</span>
+            </a>
+            <a className="action-card action-score" href="/score">
+              <span className="action-number">02</span>
+              <span className="action-copy"><strong>Ввод баллов</strong><small>Рабочее место сотрудника площадки</small></span>
+              <span className="action-arrow" aria-hidden="true">↗</span>
+            </a>
+            <div className="action-card action-board">
+              <span className="action-number">03</span>
+              <span className="action-copy"><strong>Таблица участников</strong><small>Посмотрите текущий рейтинг события</small></span>
+              <form className="event-form" onSubmit={openLeaderboard}>
+                <label className="visually-hidden" htmlFor="event-id">Номер мероприятия</label>
+                <input
+                  id="event-id"
+                  inputMode="numeric"
+                  pattern="[1-9][0-9]*"
+                  required
+                  value={eventId}
+                  onChange={(event) => setEventId(event.target.value)}
+                  placeholder="ID события"
+                />
+                <button type="submit" aria-label="Открыть рейтинг">Открыть ↗</button>
+              </form>
             </div>
-            <button className="outline-button" onClick={() => setTab("leaderboard")}>VIEW LIVE BOARD <span>↗</span></button>
-          </div>
+          </section>
 
-          {tab === "overview" && <>
-            <section className="stats-grid">
-              <article className="stat-card stat-accent"><span>REGISTERED GUESTS</span><strong>128</strong><small>+ 18 since doors opened</small></article>
-              <article className="stat-card"><span>POINTS AWARDED</span><strong>2,418</strong><small>across all six rooms</small></article>
-              <article className="stat-card"><span>ROOMS COMPLETED</span><strong>04<span className="stat-unit">/ 06</span></strong><small>average guest progress</small></article>
-              <article className="stat-card"><span>TIME TOGETHER</span><strong>42<span className="stat-unit">m</span></strong><small>average first visit</small></article>
-            </section>
+          <p className="home-note">Нужен доступ сотрудника? <a href="/organizer">Кабинет организатора</a></p>
+        </main>
+      )}
 
-            <div className="section-title"><div><span className="eyebrow">EXPLORE THE FLOOR</span><h3>Rooms & stations</h3></div><span className="section-count">06 TOTAL ↘</span></div>
-            <div className="station-grid">
-              {stations.map((station) => (
-                <button key={station.id} className={`station-card ${activeStation === station.id ? "selected" : ""}`} onClick={() => { setActiveStation(station.id); setTab("stations"); }}>
-                  <div className="station-top"><span>ROOM {station.id}</span><span>{station.wing.toUpperCase()}</span><span className="view-status"><i /> {station.id === "01" ? "VISITED" : "ON VIEW"}</span></div>
-                  <div className={`station-art ${station.color}`}><span className="station-number">{station.id}</span><span className="station-symbol">{station.symbol}</span></div>
-                  <div className="station-info"><h4>{station.name}</h4><p>{station.detail}</p></div>
-                  <div className="station-foot"><span>◷ &nbsp;{station.visited} VISITS</span><span>OPEN ROOM ↗</span></div>
-                </button>
-              ))}
-            </div>
+      {page === "leaderboard" && <LeaderboardPage eventId={eventId} onEventIdChange={setEventId} />}
+      {page === "registration" && <RegistrationPage />}
+      {page === "scoring" && <ScoringPage />}
+      {page === "organizer" && <OrganizerPage />}
+      {page === "callback" && (
+        <main className="workspace-page">
+          {authLoading
+            ? <div className="state-box" role="status"><span className="spinner" />Завершаем вход через Keycloak…</div>
+            : <div className="state-box error-box" role="alert">{authError || "Вход не настроен. Проверьте конфигурацию Keycloak."}<a className="back-link" href="/organizer">Перейти в кабинет</a></div>}
+        </main>
+      )}
 
-            <div className="section-title leaderboard-title"><div><span className="eyebrow">A LITTLE FRIENDLY COMPETITION</span><h3>Leading the way</h3></div><button className="text-button" onClick={() => setTab("leaderboard")}>FULL LEADERBOARD ↗</button></div>
-            <Leaderboard rows={people.slice(0, 3)} />
-          </>}
-
-          {tab === "participants" && <>
-            <div className="panel-intro"><p>Every guest has their own route through the rooms. Find a person to view their registration and progress.</p><button className="solid-button" onClick={() => alert("Connect this action to POST /events/{event_id}/participants")}>+ REGISTER GUEST</button></div>
-            <div className="search-row"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or registration number…" /><span>{filteredPeople.length} GUESTS</span></div>
-            <div className="people-list">{filteredPeople.map((p) => <div className="person-row" key={p.number}><span className="person-number">#{p.number}</span><strong>{p.name}</strong><span>{p.progress} ROOMS</span><b>{p.points} PTS</b></div>)}</div>
-          </>}
-
-          {tab === "stations" && <>
-            <div className="station-detail">
-              <div className={`detail-art ${stations.find(s => s.id === activeStation)?.color || "tomato"}`}><span>{stations.find(s => s.id === activeStation)?.symbol}</span><small>ROOM {activeStation}</small></div>
-              <div className="detail-copy"><div className="eyebrow">STATION CONFIGURATION</div><h3>{stations.find(s => s.id === activeStation)?.name}</h3><p>{stations.find(s => s.id === activeStation)?.detail}</p><div className="scale-row"><span>SCORING SCALE</span><strong>0 — {stations.find(s => s.id === activeStation)?.max} POINTS · STEP 1</strong></div><div className="scale-row"><span>VISITS RECORDED</span><strong>{stations.find(s => s.id === activeStation)?.visited}</strong></div><button className="solid-button" onClick={() => alert("Station editing will be connected to the API.")}>EDIT STATION ↗</button></div>
-            </div>
-            <div className="section-title"><div><span className="eyebrow">ALL LOCATIONS</span><h3>Choose a room</h3></div></div>
-            <div className="station-tabs">{stations.map(s => <button className={activeStation === s.id ? "chosen" : ""} onClick={() => setActiveStation(s.id)} key={s.id}>{s.id} / {s.name}</button>)}</div>
-          </>}
-
-          {tab === "leaderboard" && <>
-            <div className="leaderboard-banner"><SunMark /><div><span className="eyebrow">THE CURRENT PICTURE</span><strong>Every point tells a story.</strong><small>Ranked by total points · ties share the same place</small></div><span className="live-pill"><i /> LIVE</span></div>
-            <div className="search-row"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a guest…" /><span>UPDATED JUST NOW</span></div>
-            <Leaderboard rows={filteredPeople} expanded />
-          </>}
-          <footer className="content-footer"><span>KERFUFFLE © 2026</span><span>MADE FOR GATHERING, NOT HURRYING.</span><span>ISSUE 001 · {selectedEvent.toUpperCase()}</span></footer>
-        </section>
-      </div>
-    </main>
+      <footer className="site-footer">
+        <a className="footer-brand" href="/">KERFUFFLE</a>
+        <span>СОБЫТИЯ, КОТОРЫЕ ОБЪЕДИНЯЮТ</span>
+        <span>© 2026</span>
+      </footer>
+    </div>
   );
 }
 
-function Leaderboard({ rows, expanded = false }: { rows: typeof people; expanded?: boolean }) {
-  let lastPoints = -1;
-  let rank = 0;
-  return <div className="leaderboard">
-    <div className="leader-head"><span>PLACE</span><span>GUEST</span><span>ROOMS VISITED</span><span>TOTAL POINTS</span></div>
-    {rows.map((p, i) => {
-      if (p.points !== lastPoints) rank = i + 1;
-      lastPoints = p.points;
-      return <div className="leader-row" key={p.number}><strong className="rank">{String(rank).padStart(2, "0")}</strong><span className="leader-name">{p.name}<small>REG. #{p.number}</small></span><span className="leader-progress">{p.progress}</span><strong className="leader-points">{p.points}<small>PTS</small></strong></div>;
-    })}
-    {rows.length === 0 && <div className="empty-state">No guests match that search yet.</div>}
-    {!expanded && <div className="leader-note">A shared place is awarded when totals are equal. Time is never a tie-breaker.</div>}
-  </div>;
+function LeaderboardPage({
+  eventId,
+  onEventIdChange,
+}: {
+  eventId: string;
+  onEventIdChange: (value: string) => void;
+}) {
+  const [data, setData] = useState<LeaderboardResponse | null>(null);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [errorEventId, setErrorEventId] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [loadedEventId, setLoadedEventId] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const validEventId = /^[1-9]\d*$/.test(eventId.trim());
+
+  useEffect(() => {
+    if (!validEventId) return;
+
+    let active = true;
+    let controller: AbortController | undefined;
+    let pending = false;
+    let hasSuccessfulResponse = false;
+    const refresh = async (initial: boolean) => {
+      if (pending) return;
+      pending = true;
+      controller = new AbortController();
+      if (initial) setLoading(true);
+      try {
+        const result = await getPublicLeaderboard(Number(eventId), controller.signal);
+        if (!active) return;
+        hasSuccessfulResponse = true;
+        setData(result);
+        setLoadedEventId(eventId.trim());
+        setError("");
+        setErrorEventId("");
+        setLastUpdated(new Date());
+      } catch (requestError) {
+        if (!active || (requestError instanceof DOMException && requestError.name === "AbortError")) return;
+        setErrorEventId(eventId.trim());
+        setError(
+          requestError instanceof ApiError
+            ? requestError.message
+            : "Не удалось загрузить рейтинг. Проверьте подключение и попробуйте ещё раз.",
+        );
+      } finally {
+        pending = false;
+        if (active && initial) setLoading(false);
+      }
+    };
+
+    void refresh(true);
+    const intervalId = window.setInterval(() => {
+      if (hasSuccessfulResponse) void refresh(false);
+    }, 5000);
+    return () => {
+      active = false;
+      controller?.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [eventId, validEventId, refreshKey]);
+
+  const participants = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const visibleData = validEventId && loadedEventId === eventId.trim() ? data : null;
+    if (!visibleData || !normalizedQuery) return visibleData?.participants ?? [];
+    return visibleData.participants.filter((participant) =>
+      participant.registration_number.toLowerCase().includes(normalizedQuery),
+    );
+  }, [data, eventId, loadedEventId, query, validEventId]);
+
+  const visibleData = validEventId && loadedEventId === eventId.trim() ? data : null;
+  const visibleError = validEventId && errorEventId === eventId.trim() ? error : "";
+
+  function loadEvent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!validEventId) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("eventId", eventId.trim());
+    window.history.replaceState(null, "", `/leaderboard?${params.toString()}`);
+    setRefreshKey((key) => key + 1);
+  }
+
+  return (
+    <main className="board-page">
+      <div className="page-kicker"><span className="eyebrow">ОТКРЫТЫЕ РЕЗУЛЬТАТЫ</span><span className="live-indicator"><i /> АВТООБНОВЛЕНИЕ</span></div>
+      <div className="board-heading">
+        <div>
+          <h1>Рейтинг<span className="accent-dot">.</span></h1>
+          <p>{visibleData ? visibleData.event.name : "Результаты участников мероприятия"}</p>
+        </div>
+        <form className="board-event-form" onSubmit={loadEvent}>
+          <label htmlFor="board-event-id">Мероприятие</label>
+          <div>
+            <input id="board-event-id" inputMode="numeric" pattern="[1-9][0-9]*" required value={eventId} onChange={(event) => onEventIdChange(event.target.value)} placeholder="ID события" />
+            <button type="submit">Показать</button>
+          </div>
+        </form>
+      </div>
+
+      {!validEventId && <div className="notice-box">Введите ID мероприятия, чтобы загрузить публичный рейтинг.</div>}
+      {validEventId && loading && !visibleData && <div className="state-box" role="status"><span className="spinner" />Загружаем результаты…</div>}
+      {visibleError && <div className={visibleData ? "inline-error" : "state-box error-box"} role="alert">
+        <span>{visibleError}</span>
+        {!visibleData && <button className="retry-button" onClick={() => setRefreshKey((key) => key + 1)}>Повторить</button>}
+      </div>}
+
+      {visibleData && (
+        <>
+          <section className="board-summary" aria-label="Сводка рейтинга">
+            <div><span>УЧАСТНИКОВ</span><strong>{visibleData.participants.length}</strong></div>
+            <div><span>ПЛОЩАДОК</span><strong>{visibleData.stations_total}</strong></div>
+            <div><span>ОБНОВЛЕНО</span><strong className="updated-time">{lastUpdated?.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "—"}</strong></div>
+          </section>
+          <div className="table-heading">
+            <div><span className="eyebrow">ТЕКУЩИЕ РЕЗУЛЬТАТЫ</span><h2>Участники</h2></div>
+            <label className="search-control"><span aria-hidden="true">⌕</span><input aria-label="Поиск по номеру участника" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Номер участника" /></label>
+          </div>
+          <div className="leaderboard-table" role="table" aria-label="Рейтинг участников">
+            <div className="table-row table-header" role="row">
+              <span role="columnheader">МЕСТО</span><span role="columnheader">УЧАСТНИК</span><span role="columnheader">ПЛОЩАДКИ</span><span role="columnheader">БАЛЛЫ</span>
+            </div>
+            {participants.map((participant) => (
+              <div className="table-row" role="row" key={participant.registration_number}>
+                <strong className="rank-cell" role="cell">{String(participant.place).padStart(2, "0")}</strong>
+                <span className="participant-cell" role="cell">
+                  <strong>{participant.first_name} {participant.last_name}</strong>
+                  <small>№ {participant.registration_number}</small>
+                </span>
+                <span className="progress-cell" role="cell" aria-label="Баллы по площадкам">
+                  {participant.stations.map((station) => (
+                    <span className={`station-progress ${station.points === null ? "not-visited" : ""}`} key={station.station_id} title={`${station.name}: ${station.points === null ? "не пройдена" : `${station.points} из ${station.score_max}`}`}>
+                      <span>{station.name}</span>
+                      <strong>{station.points === null ? "—" : station.points}</strong>
+                    </span>
+                  ))}
+                </span>
+                <strong className="points-cell" role="cell">{participant.total_points}<small> БАЛЛОВ</small></strong>
+              </div>
+            ))}
+            {participants.length === 0 && <div className="empty-state">{visibleData.participants.length ? "Участник с таким номером не найден." : "В этом мероприятии пока нет участников."}</div>}
+          </div>
+          <p className="privacy-note">Публично отображаются имя, номер и результаты; контакты не раскрываются. Равные результаты занимают одно место.</p>
+        </>
+      )}
+    </main>
+  );
 }
 
 export default App;

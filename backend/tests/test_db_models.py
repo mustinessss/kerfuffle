@@ -15,6 +15,10 @@ def test_all_design_document_tables_have_models():
         "event_participants",
         "event_access",
         "scores",
+        "score_audit",
+        "access_codes",
+        "access_sessions",
+        "access_code_attempts",
     }
 
 
@@ -55,7 +59,7 @@ def test_postgresql_primary_keys_use_identity_columns():
     assert "BIGINT GENERATED ALWAYS AS IDENTITY" in ddl
 
 
-def test_metadata_can_create_all_seven_tables():
+def test_metadata_can_create_all_tables():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     event.listen(
         engine,

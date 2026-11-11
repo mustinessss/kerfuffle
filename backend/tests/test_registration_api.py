@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.participants import (
     ParticipantCreate,
     PersonCreate,
+    _next_registration_number,
     list_participants,
     register_participant,
     search_people,
@@ -235,7 +236,7 @@ def test_registration_creates_person_sequential_number_and_random_qr(
         db_session,
     )
 
-    assert response["registration_number"] == "0001"
+    assert response["registration_number"] == "000001"
     assert response["first_name"] == "Alex"
     assert response["last_name"] == "Example"
     UUID(response["qr_token"])
@@ -265,8 +266,8 @@ def test_registration_reuses_person_and_rejects_duplicate(
         db_session,
     )
 
-    assert first["registration_number"] == "0001"
-    assert second["registration_number"] == "0002"
+    assert first["registration_number"] == "000001"
+    assert second["registration_number"] == "000002"
     assert first["qr_token"] != second["qr_token"]
 
     with pytest.raises(HTTPException) as error:
@@ -278,6 +279,14 @@ def test_registration_reuses_person_and_rejects_duplicate(
         )
     assert error.value.status_code == 409
     assert db_session.query(EventParticipant).count() == 2
+
+
+def test_registration_number_limit_is_six_digits():
+    assert _next_registration_number(0) == "000001"
+    assert _next_registration_number(999_998) == "999999"
+    with pytest.raises(HTTPException) as error:
+        _next_registration_number(999_999)
+    assert error.value.status_code == 409
 
 
 def test_registration_requires_registrar_or_organizer(db_session, event_team):
@@ -321,4 +330,4 @@ def test_people_search_and_participant_list_hide_optional_personal_data(
     assert results == [{"id": person.id, "first_name": "Alex", "last_name": "Example"}]
     assert "phone" not in participants[0]
     assert "workplace_or_study" not in participants[0]
-    assert participants[0]["registration_number"] == "0001"
+    assert participants[0]["registration_number"] == "000001"
