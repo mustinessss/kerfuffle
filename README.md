@@ -1,21 +1,38 @@
 # Kerfuffle
 
-Стартовый каркас сервиса мероприятий.
+Сервис для регистрации участников мероприятий, выставления баллов на площадках
+и публикации рейтинга.
 
-## Состав
-- `backend/` — FastAPI, SQLAlchemy engine, конфигурация и health endpoint.
-- `database/schema.sql` — исходная PostgreSQL-схема v0.1.
-- `frontend/` — зарезервирован для выбранного frontend-стека.
+## Состав проекта
 
-## Быстрый запуск на Windows
+- `backend/` — FastAPI, SQLAlchemy, OIDC-аутентификация и API.
+- `backend/alembic/` — версионируемые миграции PostgreSQL.
+- `database/schema.sql` — SQL-схема проекта.
+- `database/app_role.sql` — ограниченная роль PostgreSQL для runtime-приложения.
+- `frontend/` — публичный рейтинг на React, Vite и TypeScript.
+- `PROJECT_STATUS.md` — сделанное, состояние окружения и оставшиеся задачи.
 
-1. Убедитесь, что локальная PostgreSQL запущена, а база `kerfuffle` создана.
-2. Примените `database/schema.sql` к этой базе, если схема ещё не применена.
-3. Перейдите в `backend` и выполните инструкции из `backend/README.md`.
-4. Запустите API командой `uvicorn app.main:app --reload`.
-5. Откройте http://127.0.0.1:8000/docs.
+## Локальный запуск на Windows
 
-## Важно
-Схема базы сохранена как предоставлена. На этом этапе приложение проверяет
-подключение к БД, но ещё не реализует CRUD-операции и авторизацию.
-Не публикуйте `.env` и не коммитьте пароли в Git.
+1. Настройте PostgreSQL и приложение по инструкциям в
+   [backend/README.md](./backend/README.md). Для приложения используйте роль
+   `kerfuffle_app`, а миграции выполняйте от имени владельца базы.
+2. Запустите API из `backend`:
+
+   ```powershell
+   python -m uvicorn app.main:app --reload
+   ```
+
+3. Установите Node.js LTS. В другом PowerShell из `frontend` выполните:
+
+   ```powershell
+   npm install
+   npm run dev
+   ```
+
+4. Откройте ссылку Vite с номером мероприятия, например
+   `http://localhost:5173/?eventId=1`, или документацию API
+   http://127.0.0.1:8000/docs.
+
+Для входа в защищённый рабочий кабинет необходимо настроить OIDC-провайдера.
+Не публикуйте `.env` и не сохраняйте пароль PostgreSQL в Git.

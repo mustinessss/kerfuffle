@@ -5,42 +5,47 @@ BEGIN;
 
 CREATE TABLE people (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    first_name TEXT NOT NULL CHECK (btrim(first_name) <> ''),
-    last_name TEXT NOT NULL CHECK (btrim(last_name) <> ''),
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
     birth_date DATE,
     workplace_or_study TEXT,
     phone TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT people_first_name_not_empty CHECK (btrim(first_name) <> ''),
+    CONSTRAINT people_last_name_not_empty CHECK (btrim(last_name) <> '')
 );
 
 CREATE TABLE events (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    name TEXT NOT NULL,
     event_date DATE NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT events_name_not_empty CHECK (btrim(name) <> '')
 );
 
 CREATE TABLE users (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     auth_subject TEXT NOT NULL UNIQUE,
     email TEXT,
-    display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
+    display_name TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     is_system_admin BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT users_display_name_not_empty CHECK (btrim(display_name) <> '')
 );
 
 CREATE TABLE stations (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     event_id BIGINT NOT NULL
         REFERENCES events(id) ON DELETE RESTRICT,
-    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    name TEXT NOT NULL,
     score_min INTEGER NOT NULL,
     score_max INTEGER NOT NULL,
     score_step INTEGER NOT NULL,
 
     CONSTRAINT stations_id_event_unique UNIQUE (id, event_id),
     CONSTRAINT stations_name_per_event_unique UNIQUE (event_id, name),
+    CONSTRAINT stations_name_not_empty CHECK (btrim(name) <> ''),
     CONSTRAINT stations_valid_score_scale CHECK (
         score_min >= 0
         AND score_max >= score_min
@@ -55,15 +60,16 @@ CREATE TABLE event_participants (
         REFERENCES events(id) ON DELETE RESTRICT,
     person_id BIGINT NOT NULL
         REFERENCES people(id) ON DELETE RESTRICT,
-    registration_number TEXT NOT NULL
-        CHECK (btrim(registration_number) <> ''),
+    registration_number TEXT NOT NULL,
     qr_token UUID NOT NULL UNIQUE,
     registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT one_registration_per_person_event
         UNIQUE (person_id, event_id),
     CONSTRAINT registration_number_per_event_unique
-        UNIQUE (event_id, registration_number)
+        UNIQUE (event_id, registration_number),
+    CONSTRAINT event_participants_registration_number_not_empty
+        CHECK (btrim(registration_number) <> '')
 );
 
 CREATE TABLE event_access (
@@ -72,8 +78,7 @@ CREATE TABLE event_access (
         REFERENCES users(id) ON DELETE RESTRICT,
     event_id BIGINT NOT NULL
         REFERENCES events(id) ON DELETE RESTRICT,
-    role TEXT NOT NULL
-        CHECK (role IN ('organizer', 'registrar', 'station_operator')),
+    role TEXT NOT NULL,
     station_id BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -84,7 +89,9 @@ CREATE TABLE event_access (
     ),
     CONSTRAINT access_station_must_belong_to_event
         FOREIGN KEY (station_id, event_id)
-        REFERENCES stations (id, event_id) ON DELETE RESTRICT
+        REFERENCES stations (id, event_id) ON DELETE RESTRICT,
+    CONSTRAINT event_access_valid_role
+        CHECK (role IN ('organizer', 'registrar', 'station_operator'))
 );
 
 CREATE TABLE scores (
@@ -93,12 +100,13 @@ CREATE TABLE scores (
         REFERENCES event_participants(id) ON DELETE RESTRICT,
     station_id BIGINT NOT NULL
         REFERENCES stations(id) ON DELETE RESTRICT,
-    points INTEGER NOT NULL CHECK (points >= 0),
+    points INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT one_score_per_participant_station
-        UNIQUE (event_participant_id, station_id)
+        UNIQUE (event_participant_id, station_id),
+    CONSTRAINT scores_points_non_negative CHECK (points >= 0)
 );
 
 -- Indexes for common lookups.
