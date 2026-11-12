@@ -50,7 +50,7 @@ function App() {
         <main className="home-page">
           <section className="home-intro">
             <p className="eyebrow">ВСТРЕЧАЙТЕСЬ · ИГРАЙТЕ · ОТКРЫВАЙТЕ</p>
-            <h1>Хорошие события<br />случаются <em>вместе.</em></h1>
+            <h1>Сервис для проведения<br /><em>мероприятий</em></h1>
             <p className="intro-copy">Регистрация, задания на площадках и результаты — в одном месте.</p>
           </section>
 
@@ -101,7 +101,7 @@ function App() {
       )}
 
       <footer className="site-footer">
-        <a className="footer-brand" href="/">KERFUFFLE</a>
+        <a className="footer-brand" href="/">mustiness</a>
         <span>СОБЫТИЯ, КОТОРЫЕ ОБЪЕДИНЯЮТ</span>
         <span>© 2026</span>
       </footer>

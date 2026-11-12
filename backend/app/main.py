@@ -17,6 +17,9 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="Backend сервиса мероприятий Kerfuffle.",
+    docs_url=None if settings.environment.lower() == "production" else "/docs",
+    redoc_url=None if settings.environment.lower() == "production" else "/redoc",
+    openapi_url=None if settings.environment.lower() == "production" else "/openapi.json",
 )
 
 app.include_router(health_router, prefix=settings.api_v1_prefix)
@@ -30,10 +33,20 @@ app.include_router(scores_router, prefix=settings.api_v1_prefix)
 app.include_router(leaderboard_router, prefix=settings.api_v1_prefix)
 
 
+@app.middleware("http")
+async def disable_api_response_caching(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(settings.api_v1_prefix):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @app.get("/", tags=["Root"])
 def root():
     return {
         "name": settings.app_name,
         "version": "0.1.0",
-        "docs": "/docs",
+        "docs": None if settings.environment.lower() == "production" else "/docs",
     }

@@ -17,3 +17,4 @@ Thumbs.db
 # Frontend
 node_modules/
 dist/
+/mustiness-kerfuffle-package.zip

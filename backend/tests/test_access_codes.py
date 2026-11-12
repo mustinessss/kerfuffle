@@ -1,9 +1,12 @@
 from datetime import date
+import hashlib
+import hmac
 from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import ValidationError
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
@@ -98,12 +101,18 @@ def request():
     )
 
 
-def issue_code(db_session, access_setup, role="registrar", station_id=None):
+def issue_code(
+    db_session,
+    access_setup,
+    role="registrar",
+    station_id=None,
+    code="REGA2TR8",
+):
     return create_access_code(
         access_setup["event"].id,
         AccessCodeCreate(
             role=role,
-            label="Entrance" if role == "registrar" else "Main station",
+            code=code,
             station_id=station_id,
         ),
         access_setup["organizer"],
@@ -137,6 +146,8 @@ def test_codes_are_hashed_listed_without_secret_and_disabled_by_organizer(
     stored = db_session.get(AccessCode, created["id"])
     assert created["code"]
     assert stored.secret_hash != created["code"]
+    assert stored.label == "Код регистратора"
+    assert created["code"] == "REGA2TR8"
     assert created["is_active"] is True
     assert list_access_codes(
         access_setup["event"].id,
@@ -168,6 +179,50 @@ def test_registration_code_registers_in_its_event(
 
     assert result["event_id"] == access_setup["event"].id
     assert result["registration_number"] == "000001"
+
+
+def test_access_code_is_case_insensitive_and_cannot_be_reused(
+    db_session, access_setup
+):
+    created = issue_code(db_session, access_setup)
+
+    grant = verify(db_session, created["code"].lower())
+    assert grant["role"] == "registrar"
+
+    with pytest.raises(HTTPException) as error:
+        issue_code(db_session, access_setup, code=created["code"].lower())
+    assert error.value.status_code == 409
+
+
+def test_legacy_long_codes_remain_usable_after_short_code_change(
+    db_session, access_setup
+):
+    legacy_code = "legacy_code-token-1234567890"
+    secret_hash = hmac.new(
+        settings().access_code_hash_secret.encode(),
+        legacy_code.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    db_session.add(
+        AccessCode(
+            event_id=access_setup["event"].id,
+            created_by_user_id=access_setup["organizer"].id,
+            role="registrar",
+            label="Legacy registration",
+            secret_hash=secret_hash,
+        )
+    )
+    db_session.commit()
+
+    grant = verify(db_session, legacy_code)
+
+    assert grant["role"] == "registrar"
+
+
+@pytest.mark.parametrize("value", ["SHORT", "REGISTA0", "REGISTA1", "REGISTI8", "REGISTO8"])
+def test_codes_must_use_the_short_unambiguous_format(value):
+    with pytest.raises(ValidationError):
+        AccessCodeCreate(role="registrar", code=value)
 
 
 def test_station_code_is_already_scoped_and_checks_server_score_scale(
@@ -232,7 +287,7 @@ def test_code_creation_requires_organizer_and_matching_station(
     with pytest.raises(HTTPException) as error:
         create_access_code(
             access_setup["event"].id,
-            AccessCodeCreate(role="registrar", label="Entrance"),
+                AccessCodeCreate(role="registrar", code="REGA2TR8"),
             another_user,
             db_session,
             settings(),
@@ -252,10 +307,10 @@ def test_code_creation_requires_organizer_and_matching_station(
 def test_code_rate_limiter_rejects_excessive_attempts(db_session, access_setup):
     for _ in range(31):
         try:
-            verify(db_session, "not-a-valid-code")
+            verify(db_session, "AAAAAAAA")
         except HTTPException as error:
             assert error.status_code in {400, 429}
 
     with pytest.raises(HTTPException) as error:
-        verify(db_session, "not-a-valid-code")
+        verify(db_session, "AAAAAAAA")
     assert error.value.status_code == 429

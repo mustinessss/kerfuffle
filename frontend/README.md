@@ -32,9 +32,10 @@ reverse proxy. The default `/api/v1` works with the included Vite proxy.
 ## Authentication setup
 
 The local Keycloak realm includes the public OIDC client for organizer sign-in.
-Create a Keycloak user for the initial system administrator and configure its
-exact user ID (`sub`) as `OIDC_BOOTSTRAP_ADMIN_SUBJECT` in `backend/.env`.
-Remove the bootstrap subject after the first administrator has been provisioned.
+For local development only, `OIDC_BOOTSTRAP_ADMIN_SUBJECT` can bootstrap the
+first administrator. For a new installation, prefer the one-time
+`python -m app.cli` command documented in `backend/README.md` or
+`deploy/README.md`; production must not set the bootstrap environment variable.
 Configure the frontend OIDC values from `frontend/.env.example`, then restart
 the backend and Vite after changing environment files.
 
@@ -58,7 +59,10 @@ must be changed at first login.
 - Station staff enter a code already bound to their station at `/score`.
   The event and station are determined by the backend; staff can look up a
   participant and submit one score using the configured step and maximum.
-- A code is shown only once when created and is stored only as an HMAC hash.
+- The organizer chooses an 8–16 character code in the signature field. Use
+  Latin letters and digits 2–9 (I/O/0/1 are excluded); input is
+  case-insensitive. Avoid event/station names and other guessable values. The
+  code is shown once after creation and stored only as an HMAC hash.
   Codes have no expiration or use limit; disabling a code revokes its sessions.
   Staff sessions expire after 12 hours.
 - The public leaderboard shows participant names, registration numbers,

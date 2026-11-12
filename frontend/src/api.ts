@@ -273,7 +273,7 @@ export function getAccessCodes(eventId: number, accessToken: string, signal?: Ab
 export function createAccessCode(
   eventId: number,
   accessToken: string,
-  payload: { role: AccessCodeSummary["role"]; label: string; station_id: number | null },
+  payload: { role: AccessCodeSummary["role"]; code: string; station_id: number | null },
 ) {
   return requestJson<AccessCodeSummary>(`/events/${eventId}/access-codes`, {
     accessToken,

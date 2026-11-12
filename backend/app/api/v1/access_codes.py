@@ -1,12 +1,14 @@
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
+import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.participants import ParticipantCreate, register_participant_record
@@ -35,22 +37,37 @@ bearer_scheme = HTTPBearer(auto_error=False)
 SESSION_LIFETIME = timedelta(hours=12)
 ATTEMPT_WINDOW = timedelta(minutes=15)
 ATTEMPTS_PER_WINDOW = 30
+ACCESS_CODE_REGEX = r"^[A-HJ-NP-Z2-9]{8,16}$"
+ACCESS_CODE_PATTERN = re.compile(ACCESS_CODE_REGEX)
+
+
+def normalize_access_code(value: str) -> str:
+    normalized = value.strip().upper()
+    if not ACCESS_CODE_PATTERN.fullmatch(normalized):
+        raise ValueError(
+            "Access code must be 8 to 16 letters or digits, excluding I, O, 0, and 1"
+        )
+    return normalized
 
 
 class AccessCodeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: str = Field(pattern="^(registrar|station_operator)$")
-    label: str = Field(min_length=1, max_length=100)
+    code: str = Field(min_length=8, max_length=16, pattern=ACCESS_CODE_REGEX)
     station_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def validate_code(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return normalize_access_code(value)
 
     @model_validator(mode="after")
     def require_role_scope(self):
         if (self.role == "station_operator") != (self.station_id is not None):
             raise ValueError("A station code must name exactly one station")
-        self.label = self.label.strip()
-        if not self.label:
-            raise ValueError("Code label must not be blank")
         return self
 
 
@@ -58,6 +75,18 @@ class AccessCodeVerification(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(min_length=8, max_length=128)
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def validate_code(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if ACCESS_CODE_PATTERN.fullmatch(normalized.upper()):
+            return normalized.upper()
+        if re.fullmatch(r"[A-Za-z0-9_-]{8,128}", normalized):
+            return normalized
+        raise ValueError("Access code has an invalid format")
 
 
 def _secret_hash(value: str, secret: str) -> str:
@@ -170,17 +199,30 @@ def create_access_code(
             raise HTTPException(status_code=404, detail="Station not found in this event")
         station_name = station.name
 
-    raw_code = secrets.token_urlsafe(24)
+    raw_code = payload.code
+    secret_hash = _secret_hash(raw_code, secret)
+    if session.scalar(select(AccessCode.id).where(AccessCode.secret_hash == secret_hash)):
+        raise HTTPException(status_code=409, detail="This access code is already in use")
+
     access_code = AccessCode(
         event_id=event_id,
         station_id=payload.station_id,
         created_by_user_id=user.id,
         role=payload.role,
-        label=payload.label,
-        secret_hash=_secret_hash(raw_code, secret),
+        label="Код регистратора" if payload.role == "registrar" else "Код площадки",
+        secret_hash=secret_hash,
     )
     session.add(access_code)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if session.scalar(select(AccessCode.id).where(AccessCode.secret_hash == secret_hash)):
+            raise HTTPException(
+                status_code=409,
+                detail="This access code is already in use",
+            ) from exc
+        raise
     session.refresh(access_code)
     return {**access_code_response(access_code, station_name), "code": raw_code}
 
@@ -244,7 +286,7 @@ def verify_access_code(
     access_code = session.scalar(
         select(AccessCode)
         .where(
-            AccessCode.secret_hash == _secret_hash(payload.code.strip(), secret),
+            AccessCode.secret_hash == _secret_hash(payload.code, secret),
             AccessCode.is_active.is_(True),
         )
         .with_for_update()

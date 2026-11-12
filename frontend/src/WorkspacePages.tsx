@@ -251,6 +251,7 @@ export function OrganizerPage() {
             {selectedEvent && (
               <div className="workspace-card event-summary">
                 <div><span>МЕРОПРИЯТИЕ</span><strong>{selectedEvent.name}</strong></div>
+                <div><span>ID МЕРОПРИЯТИЯ</span><strong>{selectedEvent.id}</strong></div>
                 <div><span>ДАТА</span><strong>{selectedEvent.event_date}</strong></div>
                 <div><span>УЧАСТНИКОВ</span><strong>{canRegister ? visibleParticipants.length : "—"}</strong></div>
                 <div><span>ПЛОЩАДОК</span><strong>{visibleStations.length}</strong></div>
@@ -400,7 +401,7 @@ function AccessCodesPanel({
   const [createdCode, setCreatedCode] = useState("");
   const [role, setRole] = useState<AccessCodeSummary["role"]>("registrar");
   const [stationId, setStationId] = useState("");
-  const [label, setLabel] = useState("");
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -430,14 +431,16 @@ function AccessCodesPanel({
     try {
       const created = await createAccessCode(eventId, accessToken, {
         role,
-        label: label.trim(),
+        code: code.trim().toUpperCase(),
         station_id: role === "station_operator" ? Number(stationId) : null,
       });
       setCodes((current) => [created, ...current]);
       setCreatedCode(created.code ?? "");
-      setLabel("");
+      setCode("");
     } catch (requestError) {
-      setError(messageFor(requestError));
+      setError(requestError instanceof ApiError && requestError.status === 409
+        ? "Этот код уже используется. Выберите другую комбинацию."
+        : messageFor(requestError));
     } finally {
       setBusy(false);
     }
@@ -480,8 +483,20 @@ function AccessCodesPanel({
             </select>
           </label>
         )}
-        <label>Подпись<input value={label} onChange={(event) => setLabel(event.target.value)} required maxLength={100} placeholder="Например, стойка регистрации" /></label>
-        <button className="primary-button" disabled={busy || (role === "station_operator" && stations.length === 0)}>{busy ? "Сохраняем…" : "Создать код"}</button>
+        <label>Подпись — она же код для входа
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 16))}
+            required
+            minLength={8}
+            maxLength={16}
+            pattern="[A-HJ-NP-Z2-9]{8,16}"
+            autoComplete="off"
+            placeholder="Введите 8–16 символов"
+          />
+        </label>
+        <p className="access-code-hint">8–16 символов: латинские буквы и цифры 2–9. Буквы I/O и цифры 0/1 исключены, регистр не важен. Не используйте название мероприятия или площадки.</p>
+        <button className="primary-button" disabled={busy || code.length < 8 || (role === "station_operator" && stations.length === 0)}>{busy ? "Сохраняем…" : "Создать код"}</button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
       {createdCode && (

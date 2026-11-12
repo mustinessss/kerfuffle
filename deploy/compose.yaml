@@ -1,0 +1,96 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: kerfuffle
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run deploy/start.ps1 to create local secrets}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run deploy/start.ps1 to create local secrets}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../database/app_role.sql:/opt/kerfuffle/app_role.sql:ro
+      - ./init-app-role.sql:/docker-entrypoint-initdb.d/01-app-role.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kerfuffle"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.3
+    command: ["start-dev", "--import-realm", "--hostname", "http://localhost:8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?Set in deploy/.env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?Run deploy/start.ps1 to create local secrets}
+    ports:
+      - "${KEYCLOAK_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+    volumes:
+      - ../keycloak/kerfuffle-realm.json:/opt/keycloak/data/import/kerfuffle-realm.json:ro
+      - keycloak-data:/opt/keycloak/data/h2
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/kerfuffle
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg://kerfuffle_app:${APP_DB_PASSWORD}@db:5432/kerfuffle
+      OIDC_ISSUER: http://localhost:8080/realms/kerfuffle
+      OIDC_AUDIENCE: kerfuffle-api
+      OIDC_JWKS_URL: http://keycloak:8080/realms/kerfuffle/protocol/openid-connect/certs
+      KEYCLOAK_ADMIN_BASE_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN_REALM: kerfuffle
+      KEYCLOAK_ADMIN_CLIENT_ID: kerfuffle-user-provisioner
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
+      ACCESS_CODE_HASH_SECRET: ${ACCESS_CODE_HASH_SECRET:?Run deploy/start.ps1 to create local secrets}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+        VITE_OIDC_AUTHORITY: http://localhost:8080/realms/kerfuffle
+        VITE_OIDC_CLIENT_ID: kerfuffle-web
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  keycloak-data:

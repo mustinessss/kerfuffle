@@ -9,11 +9,12 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
+from app.api.v1.events import EventCreate, create_event
+from app.cli import bootstrap_system_admin
 from app.core import auth
 from app.core.auth import decode_access_token, get_current_user
 from app.core.config import Settings
 from app.core.permissions import require_event_access, require_station_access
-from app.api.v1.events import EventCreate, create_event
 from app.db.models import Event, EventAccess, Station, User
 from app.db.session import Base
 
@@ -246,3 +247,42 @@ def test_provisioned_organizer_can_create_event(db_session):
     access = db_session.query(EventAccess).one()
     assert access.user_id == organizer.id
     assert access.role == "organizer"
+
+
+def test_one_time_admin_bootstrap_creates_identity_without_password(db_session):
+    user = bootstrap_system_admin(
+        db_session,
+        auth_subject="keycloak-subject",
+        display_name="Initial administrator",
+        email="admin@example.test",
+    )
+
+    assert user.is_system_admin is True
+    assert user.auth_subject == "keycloak-subject"
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        bootstrap_system_admin(
+            db_session,
+            auth_subject="another-subject",
+            display_name="Another administrator",
+        )
+
+
+def test_one_time_admin_bootstrap_can_promote_existing_oidc_identity(db_session):
+    existing = User(
+        auth_subject="existing-subject",
+        display_name="Registered organizer",
+        is_organizer=True,
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    user = bootstrap_system_admin(
+        db_session,
+        auth_subject="existing-subject",
+        display_name="System administrator",
+    )
+
+    assert user.id == existing.id
+    assert user.is_system_admin is True
+    assert user.is_organizer is True

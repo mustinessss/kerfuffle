@@ -131,7 +131,7 @@ a.action-card:hover { background: #eee8dc; }
 .account-summary > div, .event-summary > div { display: grid; gap: 8px; }
 .account-summary span, .event-summary span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 1.2px; }
 .account-summary strong, .event-summary strong { font-family: Georgia, serif; font-size: 18px; font-weight: 400; }
-.event-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 15px; }
+.event-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 15px; }
 .event-summary strong { font-size: 16px; }
 .empty-workspace { margin: 12px 0; color: var(--muted); font-size: 13px; }
 .empty-workspace p { margin: 0; line-height: 1.6; }
@@ -155,6 +155,7 @@ a.action-card:hover { background: #eee8dc; }
 .form-actions { display: flex; align-items: center; gap: 12px; }
 .backend-gap-note { margin: 13px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .access-code-panel { margin-top: 30px; }
+.access-code-hint { flex: 1 1 100%; margin: -4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .access-code-list { display: grid; gap: 8px; margin-top: 12px; }
 .access-code-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 17px; }
 .access-code-row > div { display: grid; gap: 5px; }
