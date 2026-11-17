@@ -20,6 +20,16 @@ def require_event_access(
     if not roles or not roles <= EVENT_ROLES:
         raise ValueError("allowed_roles must contain valid event roles")
 
+    if user.is_system_admin:
+        return [
+            EventAccess(
+                user_id=user.id,
+                event_id=event_id,
+                role="organizer",
+                station_id=None,
+            )
+        ]
+
     accesses = list(
         session.scalars(
             select(EventAccess).where(
@@ -52,6 +62,14 @@ def require_station_access(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Station not found",
+        )
+
+    if user.is_system_admin:
+        return EventAccess(
+            user_id=user.id,
+            event_id=station.event_id,
+            role="organizer",
+            station_id=None,
         )
 
     access_conditions = []

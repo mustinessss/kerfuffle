@@ -1,12 +1,27 @@
-import httpx
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlsplit
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
-from app.api.v1.organizer_admin import OrganizerCreate, create_organizer
+from app.api.v1.organizer_admin import (
+    InvitationAccept,
+    InvitationCreate,
+    ResetPassword,
+    ResetRequest,
+    accept_invitation,
+    complete_password_reset,
+    create_invitation,
+    create_local_password_reset_link,
+    revoke_invitation,
+    request_password_reset,
+)
 from app.core.config import Settings
-from app.db.models import User
+from app.core.passwords import hash_password, hash_token, verify_password
+from app.db.models import OrganizerInvitation, PasswordResetToken, User, UserSession
 from app.db.session import Base
 
 
@@ -26,77 +41,259 @@ def db_session():
     engine.dispose()
 
 
-def test_non_system_admin_cannot_provision_organizer(db_session):
-    regular_user = User(auth_subject="regular-sub", display_name="Regular")
+def request_with_origin(origin: str = "http://localhost:5173") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/v1/public/invitations/accept",
+            "headers": [(b"origin", origin.encode()), (b"host", b"testserver")],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 1234),
+        }
+    )
+
+
+def admin_user(session: Session) -> User:
+    admin = User(
+        email="admin@example.test",
+        display_name="Admin",
+        is_system_admin=True,
+    )
+    session.add(admin)
+    session.commit()
+    return admin
+
+
+def create_test_invitation(session: Session, admin: User):
+    return create_invitation(
+        InvitationCreate(email="ORGANIZER@example.test"),
+        admin,
+        session,
+        Settings(),
+    )
+
+
+def test_non_system_admin_cannot_invite_organizer(db_session):
+    regular_user = User(email="regular@example.test", display_name="Regular")
     db_session.add(regular_user)
     db_session.commit()
 
     with pytest.raises(HTTPException) as error:
-        create_organizer(
-            OrganizerCreate(username="new.organizer", display_name="New Organizer"),
+        create_invitation(
+            InvitationCreate(email="new@example.test"),
             regular_user,
             db_session,
             Settings(),
         )
-
     assert error.value.status_code == 403
 
 
-def test_provisioned_organizer_receives_one_time_temporary_password(
-    db_session, monkeypatch
-):
-    admin = User(
-        auth_subject="admin-sub",
-        display_name="Admin",
-        is_system_admin=True,
+def test_invitation_stores_only_token_hash_and_accepts_once(db_session):
+    admin = admin_user(db_session)
+    invitation_result = create_test_invitation(db_session, admin)
+    token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
+    invitation = db_session.query(OrganizerInvitation).one()
+
+    assert invitation.email == "organizer@example.test"
+    assert invitation.token_hash != token
+    assert invitation.sent_at is not None
+
+    result = accept_invitation(
+        InvitationAccept(
+            token=token,
+            display_name="New Organizer",
+            password="SecurePassword123",
+        ),
+        request_with_origin(),
+        db_session,
+        Settings(),
     )
-    db_session.add(admin)
+
+    assert result == {"ok": True, "email": "organizer@example.test"}
+    organizer = db_session.query(User).filter_by(email="organizer@example.test").one()
+    assert organizer.is_organizer is True
+    assert organizer.password_hash != "SecurePassword123"
+    assert invitation.used_at is not None
+
+    with pytest.raises(HTTPException) as error:
+        accept_invitation(
+            InvitationAccept(
+                token=token,
+                display_name="Duplicate",
+                password="SecurePassword123",
+            ),
+            request_with_origin(),
+            db_session,
+            Settings(),
+        )
+    assert error.value.status_code == 400
+
+
+def test_invitation_can_be_revoked_and_cannot_be_accepted(db_session):
+    admin = admin_user(db_session)
+    invitation_result = create_test_invitation(db_session, admin)
+    token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
+    invitation = db_session.query(OrganizerInvitation).one()
+
+    assert revoke_invitation(invitation.id, admin, db_session) == {"ok": True}
+    with pytest.raises(HTTPException) as error:
+        accept_invitation(
+            InvitationAccept(
+                token=token,
+                display_name="Organizer",
+                password="SecurePassword123",
+            ),
+            request_with_origin(),
+            db_session,
+            Settings(),
+        )
+    assert error.value.status_code == 400
+
+
+def test_expired_invitation_cannot_be_accepted(db_session):
+    admin = admin_user(db_session)
+    invitation_result = create_test_invitation(db_session, admin)
+    token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
+    invitation = db_session.query(OrganizerInvitation).one()
+    invitation.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     db_session.commit()
 
-    class FakeClient:
-        def __init__(self, **_):
-            pass
+    with pytest.raises(HTTPException) as error:
+        accept_invitation(
+            InvitationAccept(
+                token=token,
+                display_name="Organizer",
+                password="SecurePassword123",
+            ),
+            request_with_origin(),
+            db_session,
+            Settings(),
+        )
+    assert error.value.status_code == 400
 
-        def __enter__(self):
-            return self
 
-        def __exit__(self, *_):
-            return False
+def test_invitation_accept_rejects_bad_origin(db_session):
+    admin = admin_user(db_session)
+    invitation_result = create_test_invitation(db_session, admin)
+    token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
 
-        def post(self, url, **kwargs):
-            request = httpx.Request("POST", url)
-            if url.endswith("/protocol/openid-connect/token"):
-                return httpx.Response(
-                    200,
-                    json={"access_token": "service-token"},
-                    request=request,
-                )
-            return httpx.Response(
-                201,
-                headers={"Location": f"{url}/organizer-subject"},
-                request=request,
-            )
+    with pytest.raises(HTTPException) as error:
+        accept_invitation(
+            InvitationAccept(
+                token=token,
+                display_name="Organizer",
+                password="SecurePassword123",
+            ),
+            request_with_origin("https://attacker.example"),
+            db_session,
+            Settings(),
+        )
+    assert error.value.status_code == 403
 
-    monkeypatch.setattr("app.api.v1.organizer_admin.httpx.Client", FakeClient)
-    result = create_organizer(
-        OrganizerCreate(
-            username="new.organizer",
-            display_name="New Organizer",
-            email="new@example.test",
-        ),
-        admin,
+
+def test_password_reset_revokes_existing_sessions_and_is_single_use(db_session, monkeypatch):
+    account = User(
+        email="organizer@example.test",
+        display_name="Organizer",
+        password_hash=hash_password("SecurePassword123"),
+        is_organizer=True,
+    )
+    db_session.add(account)
+    db_session.flush()
+    session_record = UserSession(
+        user_id=account.id,
+        token_hash="session-token-hash",
+        csrf_token_hash="csrf-token-hash",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+    )
+    db_session.add(session_record)
+    db_session.commit()
+
+    sent_messages = []
+    monkeypatch.setattr(
+        "app.api.v1.organizer_admin.send_email",
+        lambda settings, recipient, subject, body: sent_messages.append(body),
+    )
+    settings = Settings(
+        smtp_host="smtp.example.test",
+        smtp_user="mailer",
+        smtp_password="mailer-password",
+        smtp_from="noreply@example.test",
+    )
+    assert request_password_reset(
+        ResetRequest(email="ORGANIZER@example.test"),
+        request_with_origin(),
+        db_session,
+        settings,
+    ) == {"ok": True}
+    token = parse_qs(urlsplit(sent_messages[0].splitlines()[2]).query)["token"][0]
+
+    result = complete_password_reset(
+        ResetPassword(token=token, password="ReplacementPassword456"),
+        request_with_origin(),
+        db_session,
+        settings,
+    )
+    assert result == {"ok": True}
+    db_session.refresh(account)
+    db_session.refresh(session_record)
+    assert verify_password(account.password_hash, "ReplacementPassword456")
+    assert session_record.revoked_at is not None
+
+    with pytest.raises(HTTPException) as error:
+        complete_password_reset(
+            ResetPassword(token=token, password="AnotherPassword789"),
+            request_with_origin(),
+            db_session,
+            settings,
+        )
+    assert error.value.status_code == 400
+
+
+def test_password_reset_request_is_generic_for_unknown_email(db_session, monkeypatch):
+    sent_messages = []
+    monkeypatch.setattr(
+        "app.api.v1.organizer_admin.send_email",
+        lambda *args: sent_messages.append(args),
+    )
+    result = request_password_reset(
+        ResetRequest(email="unknown@example.test"),
+        request_with_origin(),
         db_session,
         Settings(
-            keycloak_admin_base_url="http://keycloak",
-            keycloak_admin_realm="kerfuffle",
-            keycloak_admin_client_id="provisioner",
-            keycloak_admin_client_secret="service-secret",
+            smtp_host="smtp.example.test",
+            smtp_user="mailer",
+            smtp_password="mailer-password",
+            smtp_from="noreply@example.test",
         ),
     )
+    assert result == {"ok": True}
+    assert sent_messages == []
 
-    assert result["username"] == "new.organizer"
-    assert result["temporary_password"]
-    assert result["must_change_password"] is True
-    stored = db_session.query(User).filter_by(auth_subject="organizer-subject").one()
-    assert stored.is_organizer is True
-    assert stored.is_system_admin is False
+
+def test_superuser_can_create_a_local_reset_link(db_session):
+    admin = admin_user(db_session)
+    account = User(
+        email="organizer@example.test",
+        display_name="Organizer",
+        password_hash=hash_password("SecurePassword123"),
+        is_organizer=True,
+    )
+    db_session.add(account)
+    db_session.commit()
+
+    result = create_local_password_reset_link(
+        account.id,
+        admin,
+        db_session,
+        Settings(app_public_url="http://localhost:5173"),
+    )
+
+    token = parse_qs(urlsplit(result["reset_url"]).query)["token"][0]
+    reset = db_session.query(PasswordResetToken).one()
+    assert result["expires_in_minutes"] == 30
+    assert reset.token_hash == hash_token(token)
+    assert reset.token_hash != token

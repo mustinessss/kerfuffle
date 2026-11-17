@@ -4,18 +4,16 @@ React, TypeScript and Vite frontend for Kerfuffle.
 
 ## Development
 
-Start PostgreSQL, Keycloak, and the backend first. In PowerShell from the
-repository root:
+Start PostgreSQL and the backend first. In PowerShell from the repository root:
 
 ```powershell
 Set-Location backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8001
 ```
 
-In another PowerShell from the repository root:
+In another PowerShell:
 
 ```powershell
-$env:PATH = "C:\Program Files\nodejs;" + $env:PATH
 Set-Location frontend
 npm install
 npm run dev
@@ -23,56 +21,44 @@ npm run dev
 
 The Vite dev server proxies `/api` requests to `http://127.0.0.1:8001`.
 Open the public board with an event ID, for example
-`http://localhost:5173/leaderboard?eventId=1`. The board uses the real API and
+`http://localhost:5173/leaderboard?eventId=1`. The board uses the API and
 refreshes every five seconds.
 
 Set `VITE_API_BASE_URL` to the backend API base path when deploying behind a
 reverse proxy. The default `/api/v1` works with the included Vite proxy.
 
-## Authentication setup
+## Authentication
 
-The local Keycloak realm includes the public OIDC client for organizer sign-in.
-For local development only, `OIDC_BOOTSTRAP_ADMIN_SUBJECT` can bootstrap the
-first administrator. For a new installation, prefer the one-time
-`python -m app.cli` command documented in `backend/README.md` or
-`deploy/README.md`; production must not set the bootstrap environment variable.
-Configure the frontend OIDC values from `frontend/.env.example`, then restart
-the backend and Vite after changing environment files.
+System administrators sign in at `/login`. The first administrator is created
+from the backend with `python -m app.cli create-admin`. A system administrator
+invites organizers from `/admin/users`; organizers receive a single-use,
+24-hour activation link by email. Password recovery uses a single-use link
+valid for 30 minutes. Production deployments must configure SMTP. Without SMTP,
+development invitations and administrator-generated password-reset links are
+shown only to a signed-in system administrator.
 
-For organizer provisioning, create a confidential client named
-`kerfuffle-user-provisioner` in the `kerfuffle` realm. Enable service accounts,
-disable browser and direct-grant flows, and assign the service account only the
-`realm-management` role `manage-users`. Set
-`KEYCLOAK_ADMIN_BASE_URL`, `KEYCLOAK_ADMIN_REALM`,
-`KEYCLOAK_ADMIN_CLIENT_ID`, and `KEYCLOAK_ADMIN_CLIENT_SECRET` in
-`backend/.env`. The service-account secret is backend-only and must never be
-added to frontend configuration or source control. The system administrator
-creates organizers from `/organizer`; the temporary password is shown once and
-must be changed at first login.
+Authentication uses an HttpOnly session cookie and CSRF protection. Staff
+sessions created with event-scoped access codes are separate and remain
+independent of user accounts.
 
 ## User flows
 
-- Organizers sign in through Keycloak, create events, configure stations, and
-  issue/revoke staff access codes.
+- Organizers sign in, manage assigned events and issue/revoke staff access codes.
 - Registrars enter their event-scoped code at `/register`. After registration,
   the screen displays the participant's six-digit number.
 - Station staff enter a code already bound to their station at `/score`.
-  The event and station are determined by the backend; staff can look up a
-  participant and submit one score using the configured step and maximum.
-- The organizer chooses an 8–16 character code in the signature field. Use
-  Latin letters and digits 2–9 (I/O/0/1 are excluded); input is
-  case-insensitive. Avoid event/station names and other guessable values. The
-  code is shown once after creation and stored only as an HMAC hash.
-  Codes have no expiration or use limit; disabling a code revokes its sessions.
-  Staff sessions expire after 12 hours.
+  The backend determines the event and station and enforces the configured
+  score scale.
+- Organizer-selected staff codes use 8–16 Latin letters/digits (I/O/0/1 are
+  excluded), are case-insensitive, and are stored only as HMAC hashes.
+  Disabling a code revokes its sessions; staff sessions expire after 12 hours.
 - The public leaderboard shows participant names, registration numbers,
-  aggregate scores, and station progress, but no contact information.
+  aggregate scores and station progress, but no contact information.
 - Organizer score corrections and annulments require a reason and are stored
   in an immutable audit log.
 
 Event lifecycle controls (pausing/closing registration and scoring) are not
-implemented yet. Use the backend OpenAPI page at `/docs` as the source of truth
-for API routes and permissions.
+implemented yet.
 
 ## Checks
 

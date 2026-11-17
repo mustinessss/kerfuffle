@@ -3,9 +3,16 @@ import type { FormEvent } from "react";
 import { ApiError, getPublicLeaderboard, type LeaderboardResponse } from "./api";
 import { useAuth } from "./authContext";
 import { OrganizerPage, RegistrationPage, ScoringPage } from "./WorkspacePages";
+import {
+  AdminUsersPage,
+  ForgotPasswordPage,
+  InvitationPage,
+  LoginPage,
+  ResetPasswordPage,
+} from "./AccountPages";
 import "./styles.css";
 
-type Page = "home" | "leaderboard" | "registration" | "scoring" | "organizer" | "callback";
+type Page = "home" | "leaderboard" | "registration" | "scoring" | "organizer" | "login" | "accept-invitation" | "forgot-password" | "reset-password" | "admin-users";
 
 function currentPage(): Page {
   const path = window.location.pathname.replace(/\/+$/, "");
@@ -13,7 +20,11 @@ function currentPage(): Page {
   if (path === "/register") return "registration";
   if (path === "/score") return "scoring";
   if (path === "/organizer") return "organizer";
-  if (path === "/auth/callback") return "callback";
+  if (path === "/login") return "login";
+  if (path === "/accept-invitation") return "accept-invitation";
+  if (path === "/forgot-password") return "forgot-password";
+  if (path === "/reset-password") return "reset-password";
+  if (path === "/admin/users") return "admin-users";
   return "home";
 }
 
@@ -24,7 +35,7 @@ function eventIdFromUrl(): string {
 function App() {
   const page = currentPage();
   const [eventId, setEventId] = useState(eventIdFromUrl);
-  const { loading: authLoading, error: authError } = useAuth();
+  const { user } = useAuth();
 
   function openLeaderboard(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,7 +53,8 @@ function App() {
         </a>
         <nav className="header-nav" aria-label="Основная навигация">
           <a href="/leaderboard">Рейтинг</a>
-          <a href="/organizer">Организатору <span aria-hidden="true">↗</span></a>
+          {user?.is_system_admin && <a href="/admin/users">Пользователи</a>}
+          <a href={user ? "/organizer" : "/login"}>{user ? "Кабинет" : "Войти"} <span aria-hidden="true">↗</span></a>
         </nav>
       </header>
 
@@ -92,13 +104,11 @@ function App() {
       {page === "registration" && <RegistrationPage />}
       {page === "scoring" && <ScoringPage />}
       {page === "organizer" && <OrganizerPage />}
-      {page === "callback" && (
-        <main className="workspace-page">
-          {authLoading
-            ? <div className="state-box" role="status"><span className="spinner" />Завершаем вход через Keycloak…</div>
-            : <div className="state-box error-box" role="alert">{authError || "Вход не настроен. Проверьте конфигурацию Keycloak."}<a className="back-link" href="/organizer">Перейти в кабинет</a></div>}
-        </main>
-      )}
+      {page === "login" && <LoginPage />}
+      {page === "accept-invitation" && <InvitationPage />}
+      {page === "forgot-password" && <ForgotPasswordPage />}
+      {page === "reset-password" && <ResetPasswordPage />}
+      {page === "admin-users" && <AdminUsersPage />}
 
       <footer className="site-footer">
         <a className="footer-brand" href="/">mustiness</a>

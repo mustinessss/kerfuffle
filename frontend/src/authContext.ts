@@ -1,11 +1,11 @@
 import { createContext, useContext } from "react";
-import type { User } from "oidc-client-ts";
+import type { CurrentAccount } from "./api";
 
 export interface AuthContextValue {
-  user: User | null;
+  user: CurrentAccount | null;
   loading: boolean;
   error: string;
-  login: () => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
 }

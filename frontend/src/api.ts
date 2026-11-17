@@ -90,11 +90,25 @@ export interface VerifiedAccess {
 
 export interface CreatedOrganizer {
   id: number;
-  username: string;
-  display_name: string;
-  email: string | null;
-  temporary_password: string;
-  must_change_password: true;
+  email: string;
+  status: "sent" | "pending";
+  expires_at: string;
+  invitation_url: string | null;
+}
+
+export interface AdminUser extends CurrentAccount {
+  is_active: boolean;
+  last_login_at: string | null;
+  events: Array<{ event_id: number; role: string }>;
+}
+
+export interface AdminInvitation {
+  id: number;
+  email: string;
+  status: "sent" | "pending" | "expired" | "used" | "revoked";
+  created_at: string;
+  expires_at: string;
+  sent_at: string | null;
 }
 
 export interface RegisteredParticipant {
@@ -155,7 +169,7 @@ export class ApiError extends Error {
 interface RequestOptions {
   signal?: AbortSignal;
   accessToken?: string;
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
 }
 
@@ -166,19 +180,27 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   options.signal?.addEventListener("abort", abortRequest, { once: true });
 
   try {
+    const csrfToken = document.cookie
+      .split("; ")
+      .find((cookie) => cookie.startsWith("kerfuffle_csrf="))
+      ?.slice("kerfuffle_csrf=".length);
     const response = await fetch(`${API_BASE_URL}${path}`, {
       method: options.method ?? "GET",
       headers: {
         Accept: "application/json",
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
         ...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+        ...(options.method && options.method !== "GET" && csrfToken ? { "X-CSRF-Token": decodeURIComponent(csrfToken) } : {}),
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      credentials: "include",
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      const message = response.status === 401
+      const message = response.status === 401 && path.endsWith("/auth/login")
+          ? "Проверьте email и пароль."
+        : response.status === 401
           ? "Сессия завершилась. Войдите снова."
           : response.status === 400
             ? "Код доступа неверен или отключён."
@@ -196,6 +218,9 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
           ? "Сервис временно недоступен. Попробуйте позже."
           : "Не удалось загрузить данные мероприятия.";
       throw new ApiError(response.status, message);
+    }
+    if (response.status === 204 || response.headers.get("content-length") === "0") {
+      return undefined as T;
     }
     return await response.json() as T;
   } catch (error) {
@@ -217,11 +242,93 @@ export function getPublicLeaderboard(eventId: number, signal?: AbortSignal) {
   );
 }
 
-export function getCurrentAccount(accessToken: string, signal?: AbortSignal) {
-  return requestJson<CurrentAccount>("/me", { accessToken, signal });
+export function getCurrentAccount(accessToken = "", signal?: AbortSignal) {
+  return requestJson<CurrentAccount>("/auth/me", { accessToken, signal });
 }
 
-export function getEvents(accessToken: string, signal?: AbortSignal) {
+export function loginWithPassword(email: string, password: string) {
+  return requestJson<CurrentAccount>("/auth/login", {
+    method: "POST",
+    body: { email, password },
+  });
+}
+
+export function logoutFromAccount() {
+  return requestJson<{ ok: boolean }>("/auth/logout", { method: "POST", body: {} });
+}
+
+export function acceptOrganizerInvitation(payload: { token: string; display_name: string; password: string }) {
+  return requestJson<{ ok: boolean; email: string }>("/public/invitations/accept", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function requestPasswordReset(email: string) {
+  return requestJson<{ ok: boolean }>("/public/password-reset/request", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+export function completePasswordReset(payload: { token: string; password: string }) {
+  return requestJson<{ ok: boolean }>("/public/password-reset/complete", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function getAdminUsers(signal?: AbortSignal) {
+  return requestJson<AdminUser[]>("/system-admin/users", { signal });
+}
+
+export function getAdminInvitations(signal?: AbortSignal) {
+  return requestJson<AdminInvitation[]>("/system-admin/invitations", { signal });
+}
+
+export function inviteOrganizer(email: string) {
+  return requestJson<CreatedOrganizer>("/system-admin/invitations", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+export function revokeInvitation(invitationId: number) {
+  return requestJson<{ ok: boolean }>(`/system-admin/invitations/${invitationId}/revoke`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export function resendInvitation(invitationId: number) {
+  return requestJson<CreatedOrganizer>(`/system-admin/invitations/${invitationId}/resend`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export function setUserBlocked(userId: number, blocked: boolean) {
+  return requestJson<{ ok: boolean }>(`/system-admin/users/${userId}/${blocked ? "block" : "unblock"}`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export function createLocalPasswordResetLink(userId: number) {
+  return requestJson<{ reset_url: string; expires_in_minutes: number }>(
+    `/system-admin/users/${userId}/password-reset-link`,
+    { method: "POST", body: {} },
+  );
+}
+
+export function setOrganizerEventAccess(userId: number, eventId: number, assigned: boolean) {
+  return requestJson<{ ok: boolean }>(`/system-admin/users/${userId}/events/${eventId}`, {
+    method: assigned ? "PUT" : "DELETE",
+    body: assigned ? {} : undefined,
+  });
+}
+
+export function getEvents(accessToken = "", signal?: AbortSignal) {
   return requestJson<EventSummary[]>("/events", { accessToken, signal });
 }
 
@@ -252,12 +359,8 @@ export function createStation(
   });
 }
 
-export function createOrganizer(
-  accessToken: string,
-  payload: { username: string; display_name: string; email?: string },
-) {
-  return requestJson<CreatedOrganizer>("/system-admin/organizers", {
-    accessToken,
+export function createOrganizer(payload: { email: string }) {
+  return requestJson<CreatedOrganizer>("/system-admin/invitations", {
     method: "POST",
     body: payload,
   });

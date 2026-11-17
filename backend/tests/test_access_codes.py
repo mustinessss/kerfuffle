@@ -56,7 +56,7 @@ def db_session():
 
 @pytest.fixture
 def access_setup(db_session):
-    organizer = User(auth_subject="organizer", display_name="Organizer")
+    organizer = User(legacy_identity_subject="organizer", display_name="Organizer")
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 12))
     db_session.add_all([organizer, event_record])
     db_session.flush()
@@ -280,7 +280,7 @@ def test_revoking_code_invalidates_existing_sessions(db_session, access_setup):
 def test_code_creation_requires_organizer_and_matching_station(
     db_session, access_setup
 ):
-    another_user = User(auth_subject="other", display_name="Other")
+    another_user = User(legacy_identity_subject="other", display_name="Other")
     db_session.add(another_user)
     db_session.commit()
 

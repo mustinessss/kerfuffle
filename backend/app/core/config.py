@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -11,67 +11,47 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/kerfuffle"
     environment: str = "development"
-    oidc_issuer: str | None = None
-    oidc_audience: str | None = None
-    oidc_jwks_url: str | None = None
-    oidc_signing_algorithm: str = "RS256"
-    oidc_bootstrap_admin_subject: str | None = None
     access_code_hash_secret: str | None = None
-    keycloak_admin_base_url: str | None = None
-    keycloak_admin_realm: str = "kerfuffle"
-    keycloak_admin_client_id: str | None = None
-    keycloak_admin_client_secret: str | None = None
-
-    @field_validator("oidc_signing_algorithm")
-    @classmethod
-    def require_asymmetric_oidc_algorithm(cls, value: str) -> str:
-        allowed = {
-            "RS256",
-            "RS384",
-            "RS512",
-            "PS256",
-            "PS384",
-            "PS512",
-            "ES256",
-            "ES384",
-            "ES512",
-            "EdDSA",
-        }
-        if value not in allowed:
-            raise ValueError("OIDC signing algorithm must be an allowed asymmetric algorithm")
-        return value
+    app_public_url: str = "http://localhost:5173"
+    app_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    session_cookie_name: str = "kerfuffle_session"
+    csrf_cookie_name: str = "kerfuffle_csrf"
+    session_idle_minutes: int = 30
+    session_absolute_hours: int = 12
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_use_tls: bool = True
 
     @model_validator(mode="after")
     def require_production_configuration(self):
+        if self.session_idle_minutes < 1 or self.session_absolute_hours < 1:
+            raise ValueError("Session expiration settings must be positive")
+        if not 1 <= self.smtp_port <= 65535:
+            raise ValueError("SMTP_PORT must be between 1 and 65535")
         if self.environment.strip().lower() != "production":
             return self
 
         missing = []
-        if not self.oidc_issuer or not self.oidc_audience or not self.oidc_jwks_url:
-            missing.append("OIDC_ISSUER, OIDC_AUDIENCE, OIDC_JWKS_URL")
         if not self.access_code_hash_secret or len(self.access_code_hash_secret) < 32:
             missing.append("ACCESS_CODE_HASH_SECRET (at least 32 characters)")
-        if self.oidc_bootstrap_admin_subject:
-            missing.append("OIDC_BOOTSTRAP_ADMIN_SUBJECT must be unset")
-        if not all(
-            (
-                self.keycloak_admin_base_url,
-                self.keycloak_admin_client_id,
-                self.keycloak_admin_client_secret,
-            )
-        ):
-            missing.append(
-                "KEYCLOAK_ADMIN_BASE_URL, KEYCLOAK_ADMIN_CLIENT_ID, "
-                "KEYCLOAK_ADMIN_CLIENT_SECRET"
-            )
-
-        for name, value in (
-            ("OIDC_ISSUER", self.oidc_issuer),
-            ("OIDC_JWKS_URL", self.oidc_jwks_url),
-            ("KEYCLOAK_ADMIN_BASE_URL", self.keycloak_admin_base_url),
-        ):
-            if value and urlsplit(value).scheme.lower() != "https":
-                missing.append(f"{name} must use HTTPS")
+        if urlsplit(self.app_public_url).scheme.lower() != "https":
+            missing.append("APP_PUBLIC_URL must use HTTPS")
+        allowed_origins = {
+            origin.strip().rstrip("/").lower()
+            for origin in self.app_allowed_origins.split(",")
+            if origin.strip()
+        }
+        public = urlsplit(self.app_public_url)
+        public_origin = f"{public.scheme}://{public.netloc}".lower()
+        if public_origin not in allowed_origins:
+            missing.append("APP_ALLOWED_ORIGINS must include APP_PUBLIC_URL origin")
+        if any(urlsplit(origin).scheme.lower() != "https" for origin in allowed_origins):
+            missing.append("APP_ALLOWED_ORIGINS must use HTTPS in production")
+        if not all((self.smtp_host, self.smtp_user, self.smtp_password, self.smtp_from)):
+            missing.append("SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM")
 
         database_url = make_url(self.database_url)
         if database_url.username in (None, "postgres") or not database_url.password:

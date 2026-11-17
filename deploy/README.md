@@ -1,14 +1,13 @@
 # Local Windows package
 
 This Docker Compose setup is for a local demo or acceptance test on one
-computer. It runs the frontend, API, PostgreSQL, and Keycloak. It uses HTTP,
-Keycloak `start-dev`, and a local PostgreSQL instance; **do not expose it to the
-internet or use it as a production deployment**.
+computer. It runs the frontend, API, and PostgreSQL over HTTP; **do not expose
+it to the internet or use it as a production deployment**.
 
 ## Requirements and startup
 
 1. Install and start Docker Desktop with the Linux container engine.
-2. To create a clean transfer archive from the repository root, run:
+2. From the repository root, create a transfer archive:
 
    ```powershell
    .\deploy\package.ps1
@@ -23,13 +22,17 @@ internet or use it as a production deployment**.
    .\deploy\start.ps1
    ```
 
-   On first run, the script creates `deploy/.env` with random passwords and a
-   random access-code hashing secret, builds the images, applies database
-   migrations, and starts the services. The web app is at
-   `http://localhost:5173`; Keycloak is at `http://localhost:8080`.
-4. Keep `deploy/.env` private. It contains the local database and Keycloak
-   administrator passwords. It is ignored by Git and must not be put in a
-   distributable archive.
+   On first run, the script creates `deploy/.env` with random database and
+   access-code secrets, builds the images, applies database migrations, and
+   starts the services. The web app is at `http://localhost:5173`.
+4. Keep `deploy/.env` private. It contains local database secrets and is
+   ignored by Git; never include it in a distributable archive.
+
+For an existing installation, back up PostgreSQL before updating. Startup
+applies pending Alembic migrations automatically. The local-auth migration
+preserves event/participant data and legacy identity IDs; it adds account,
+session, invitation, password-reset, and rate-limit tables. Resolve any
+case-insensitive duplicate user emails before upgrading.
 
 Useful commands from the repository root:
 
@@ -39,53 +42,44 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml logs -f
 docker compose --env-file deploy/.env -f deploy/compose.yaml down
 ```
 
-`down` preserves database and Keycloak data. Do not use `down --volumes`
-unless you intentionally want to erase them. PostgreSQL initialization only
-creates the application role on a new data volume; changing its password in
-`.env` does not change an existing database role.
+`down` preserves PostgreSQL data. Do not use `down --volumes` unless you
+intentionally want to erase it. PostgreSQL initialization only creates the
+application role on a new data volume; changing its password in `.env` does
+not change an existing database role.
 
 ## First system administrator
 
-1. Sign in to the Keycloak administration console using the bootstrap
-   credentials in `deploy/.env`.
-2. In the `kerfuffle` realm, create the initial system-administrator user.
-   Set a temporary password and require a password change at first login.
-3. Copy that user's Keycloak ID (`sub`) and assign the application role once:
+After startup has completed and migrations have succeeded, run:
 
-   ```powershell
-   docker compose --env-file deploy/.env -f deploy/compose.yaml run --rm backend python -m app.cli --subject "<KEYCLOAK_USER_ID>" --display-name "System administrator"
-   ```
+```powershell
+docker compose --env-file deploy/.env -f deploy/compose.yaml run --rm backend python -m app.cli create-admin
+```
 
-   Confirm the subject when prompted. The command stores no password; Keycloak
-   remains responsible for credentials.
+Enter the administrator email and a password twice when prompted. The password
+must be at least 12 characters with lowercase, uppercase, and a digit. Then
+open `http://localhost:5173/login`.
 
-## Organizer account provisioning
+## Organizer accounts and recovery
 
-To let the system administrator create organizer accounts from the app:
+The system administrator creates organizer invitations at
+`http://localhost:5173/admin/users`. For real email delivery, configure
+`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and
+`SMTP_USE_TLS` in `deploy/.env`, then recreate the backend:
 
-1. In the `kerfuffle` realm, create an OpenID Connect client with ID
-   `kerfuffle-user-provisioner`.
-2. Enable client authentication and service accounts; disable browser and
-   direct-grant flows.
-3. Open its service account's role mapping, choose client roles for
-   `realm-management`, and assign only `manage-users`.
-4. Copy the client secret into `KEYCLOAK_ADMIN_CLIENT_SECRET` in
-   `deploy/.env`, then recreate the API container:
+```powershell
+docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --force-recreate backend
+```
 
-   ```powershell
-   docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --force-recreate backend
-   ```
-
-The backend generates an organizer's temporary password, displays it once,
-and requires a change at first login. Deliver it separately through a secure
-channel.
+Without SMTP, development mode shows invitation links only to a signed-in
+system administrator. The user-management page can also create a local
+single-use password-reset link (30-minute expiry) for testing.
 
 ## Data and production
 
-PostgreSQL and Keycloak data are stored in Docker volumes. Back up these
-volumes before moving the installation or rebuilding the machine.
+PostgreSQL data is stored in a Docker volume. Back it up before moving the
+installation or rebuilding the machine.
 
 For production, use the separate checklist in the root `README.md` and
-`backend/README.md`: this local package does not configure HTTPS, production
-Keycloak, PostgreSQL TLS, managed secrets, backups, monitoring, or edge
+`backend/README.md`: this local package does not configure HTTPS, PostgreSQL
+TLS, managed secrets, backups, monitoring, email delivery, or edge
 rate-limits.

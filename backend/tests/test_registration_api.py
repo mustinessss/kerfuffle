@@ -52,9 +52,9 @@ def db_session():
 
 @pytest.fixture
 def event_team(db_session):
-    organizer = User(auth_subject="organizer", display_name="Organizer")
-    registrar = User(auth_subject="registrar", display_name="Registrar")
-    operator = User(auth_subject="operator", display_name="Operator")
+    organizer = User(legacy_identity_subject="organizer", display_name="Organizer")
+    registrar = User(legacy_identity_subject="registrar", display_name="Registrar")
+    operator = User(legacy_identity_subject="operator", display_name="Operator")
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 11))
     db_session.add_all([organizer, registrar, operator, event_record])
     db_session.flush()

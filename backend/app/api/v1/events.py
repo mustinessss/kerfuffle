@@ -40,13 +40,14 @@ def list_events(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    events = session.scalars(
-        select(Event)
-        .join(EventAccess, EventAccess.event_id == Event.id)
-        .where(EventAccess.user_id == user.id)
-        .distinct()
-        .order_by(Event.event_date, Event.id)
-    )
+    statement = select(Event).order_by(Event.event_date, Event.id)
+    if not user.is_system_admin:
+        statement = (
+            statement.join(EventAccess, EventAccess.event_id == Event.id)
+            .where(EventAccess.user_id == user.id)
+            .distinct()
+        )
+    events = session.scalars(statement)
     return [event_response(event) for event in events]
 
 
@@ -56,10 +57,10 @@ def create_event(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    if not user.is_system_admin and not user.is_organizer:
+    if not user.is_system_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Organizer role required",
+            detail="System administrator role required",
         )
 
     event = Event(name=payload.name, event_date=payload.event_date)
@@ -89,5 +90,6 @@ def read_event(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found",
         )
-    require_event_access(session, user, event_id)
+    if not user.is_system_admin:
+        require_event_access(session, user, event_id)
     return event_response(event)

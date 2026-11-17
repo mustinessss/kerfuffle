@@ -19,6 +19,10 @@ def test_all_design_document_tables_have_models():
         "access_codes",
         "access_sessions",
         "access_code_attempts",
+        "user_sessions",
+        "organizer_invitations",
+        "password_reset_tokens",
+        "auth_attempts",
     }
 
 

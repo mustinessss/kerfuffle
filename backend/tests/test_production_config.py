@@ -11,17 +11,13 @@ def production_settings(**overrides):
             "postgresql+psycopg://kerfuffle_app:strong-password"
             "@db.example.test:5432/kerfuffle?sslmode=verify-full"
         ),
-        "oidc_issuer": "https://identity.example.test/realms/kerfuffle",
-        "oidc_audience": "kerfuffle-api",
-        "oidc_jwks_url": (
-            "https://identity.example.test/realms/kerfuffle/"
-            "protocol/openid-connect/certs"
-        ),
         "access_code_hash_secret": "x" * 48,
-        "keycloak_admin_base_url": "https://identity.example.test",
-        "keycloak_admin_realm": "kerfuffle",
-        "keycloak_admin_client_id": "kerfuffle-user-provisioner",
-        "keycloak_admin_client_secret": "service-secret",
+        "app_public_url": "https://kerfuffle.example.test",
+        "app_allowed_origins": "https://kerfuffle.example.test",
+        "smtp_host": "smtp.example.test",
+        "smtp_user": "kerfuffle",
+        "smtp_password": "smtp-secret",
+        "smtp_from": "noreply@example.test",
     }
     values.update(overrides)
     return Settings(**values)
@@ -34,13 +30,11 @@ def test_valid_production_configuration_is_accepted():
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"oidc_issuer": None},
         {"access_code_hash_secret": "short"},
-        {"oidc_bootstrap_admin_subject": "bootstrap-user"},
-        {"keycloak_admin_client_secret": None},
         {
-            "oidc_issuer": "http://identity.example.test/realms/kerfuffle",
+            "app_public_url": "http://kerfuffle.example.test",
         },
+        {"smtp_password": None},
         {
             "database_url": (
                 "postgresql+psycopg://postgres:postgres"

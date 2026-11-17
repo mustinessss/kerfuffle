@@ -49,9 +49,9 @@ def db_session():
 
 @pytest.fixture
 def scoring_setup(db_session):
-    organizer = User(auth_subject="organizer", display_name="Organizer")
-    operator = User(auth_subject="operator", display_name="Operator")
-    other_user = User(auth_subject="other", display_name="Other")
+    organizer = User(legacy_identity_subject="organizer", display_name="Organizer")
+    operator = User(legacy_identity_subject="operator", display_name="Operator")
+    other_user = User(legacy_identity_subject="other", display_name="Other")
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 11))
     other_event = Event(name="Other", event_date=date(2026, 11, 12))
     db_session.add_all([organizer, operator, other_user, event_record, other_event])

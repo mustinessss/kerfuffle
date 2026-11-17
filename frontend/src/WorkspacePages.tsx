@@ -5,7 +5,6 @@ import { ApiError } from "./api";
 import {
   createAccessCode,
   createEvent,
-  createOrganizer,
   createStation,
   correctScore,
   annulScore,
@@ -14,6 +13,7 @@ import {
   getEvents,
   getParticipants,
   getEventScores,
+  inviteOrganizer,
   getStations,
   lookupParticipant,
   lookupWithAccessCode,
@@ -28,7 +28,6 @@ import {
 import type {
   AccessCodeSummary,
   CurrentAccount,
-  CreatedOrganizer,
   EventSummary,
   ParticipantLookup,
   RegisteredParticipant,
@@ -36,7 +35,6 @@ import type {
   StationSummary,
   VerifiedAccess,
 } from "./api";
-import { oidcConfigured } from "./authClient";
 import { useAuth } from "./authContext";
 
 const EMPTY_PARTICIPANTS: RegisteredParticipant[] = [];
@@ -49,20 +47,36 @@ function messageFor(error: unknown): string {
 
 function AuthGate() {
   const { login, user, error: authError } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    setFormError("");
+    try {
+      await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+    } catch (requestError) {
+      setFormError(messageFor(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="workspace-card auth-gate">
       <p className="eyebrow">ЗАЩИЩЁННЫЙ ДОСТУП</p>
-      <h2>{oidcConfigured ? "Войдите через Keycloak." : "Вход пока не настроен."}</h2>
-      <p>
-        {oidcConfigured
-          ? "Доступ к действиям определяется назначенными ролями в мероприятии."
-          : "Для входа задайте VITE_OIDC_AUTHORITY и VITE_OIDC_CLIENT_ID во frontend/.env.local, затем настройте OIDC-параметры backend."}
-      </p>
-      {authError && <p className="form-error" role="alert">{authError}</p>}
+      <h2>Войдите в Kerfuffle.</h2>
+      <p>Доступ к мероприятиям определяется назначенными ролями.</p>
+      {(authError || formError) && <p className="form-error" role="alert">{formError || authError}</p>}
       {!user && (
-        <button className="primary-button" disabled={!oidcConfigured} onClick={() => void login()}>
-          Войти через Keycloak ↗
-        </button>
+        <form className="workspace-form login-form" onSubmit={(event) => void submit(event)}>
+          <label>Email<input name="email" type="email" autoComplete="username" required maxLength={254} /></label>
+          <label>Пароль<input name="password" type="password" autoComplete="current-password" required /></label>
+          <button className="primary-button" disabled={saving}>{saving ? "Входим…" : "Войти"}</button>
+          <a className="quiet-button" href="/forgot-password">Забыли пароль?</a>
+        </form>
       )}
     </section>
   );
@@ -97,7 +111,7 @@ function AuthenticatedPage({
     <main className="workspace-page">
       <WorkspaceHeading title={title} description={description} />
       <div className="workspace-account">
-        <span>{user.profile.name ?? user.profile.preferred_username ?? user.profile.email ?? "Авторизованный пользователь"}</span>
+        <span>{user.display_name}</span>
         <button className="quiet-button" onClick={() => { clearError(); void logout(); }}>Выйти</button>
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -118,7 +132,7 @@ function WorkspaceHeading({ title, description }: { title: string; description: 
 
 export function OrganizerPage() {
   const { user } = useAuth();
-  const token = user?.access_token ?? "";
+  const token = "";
   const [account, setAccount] = useState<CurrentAccount | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
@@ -149,7 +163,7 @@ export function OrganizerPage() {
   }, [participantQuery, visibleParticipants]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!user) return;
     const controller = new AbortController();
     let active = true;
     Promise.all([getCurrentAccount(token, controller.signal), getEvents(token, controller.signal)])
@@ -174,10 +188,10 @@ export function OrganizerPage() {
       active = false;
       controller.abort();
     };
-  }, [token]);
+  }, [token, user]);
 
   useEffect(() => {
-    if (!token || selectedEventId === null) return;
+    if (!user || selectedEventId === null) return;
     const controller = new AbortController();
     let active = true;
     const participantRequest = canRegister
@@ -204,7 +218,7 @@ export function OrganizerPage() {
       active = false;
       controller.abort();
     };
-  }, [canRegister, refreshKey, selectedEventId, token]);
+  }, [canRegister, refreshKey, selectedEventId, token, user]);
 
   async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -262,7 +276,7 @@ export function OrganizerPage() {
                 <p>{account.is_system_admin ? "Создайте первое мероприятие, чтобы начать настройку." : "Пока нет мероприятий, к которым у вас есть доступ."}</p>
               </div>
             )}
-            {(account.is_system_admin || account.is_organizer) && (
+            {account.is_system_admin && (
               <form className="workspace-form event-create-form" onSubmit={(event) => void handleCreateEvent(event)}>
                 <h3>Новое мероприятие</h3>
                 <label>Название<input name="eventName" required maxLength={200} /></label>
@@ -271,7 +285,7 @@ export function OrganizerPage() {
               </form>
             )}
           </section>
-          {account.is_system_admin && <OrganizerProvisioningPanel accessToken={token} />}
+          {account.is_system_admin && <OrganizerProvisioningPanel />}
           {actionMessage && <p className="success-message" role="status">{actionMessage}</p>}
           {selectedEvent && (
             <>
@@ -334,8 +348,8 @@ export function OrganizerPage() {
   );
 }
 
-function OrganizerProvisioningPanel({ accessToken }: { accessToken: string }) {
-  const [created, setCreated] = useState<CreatedOrganizer | null>(null);
+function OrganizerProvisioningPanel() {
+  const [created, setCreated] = useState<{ email: string; invitation_url: string | null } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -347,11 +361,8 @@ function OrganizerProvisioningPanel({ accessToken }: { accessToken: string }) {
     setError("");
     setCreated(null);
     try {
-      const organizer = await createOrganizer(accessToken, {
-        username: String(form.get("username") ?? "").trim(),
-        display_name: String(form.get("displayName") ?? "").trim(),
-        email: String(form.get("email") ?? "").trim(),
-      });
+      const email = String(form.get("email") ?? "").trim();
+      const organizer = await inviteOrganizer(email);
       setCreated(organizer);
       formElement.reset();
     } catch (requestError) {
@@ -364,23 +375,18 @@ function OrganizerProvisioningPanel({ accessToken }: { accessToken: string }) {
   return (
     <section className="workspace-section">
       <div className="workspace-section-heading">
-        <div><p className="eyebrow">СИСТЕМНЫЙ ДОСТУП</p><h2>Учётные записи организаторов</h2></div>
+        <div><p className="eyebrow">СИСТЕМНЫЙ ДОСТУП</p><h2>Приглашение организатора</h2></div>
       </div>
       <form className="workspace-form event-create-form" onSubmit={(event) => void handleSubmit(event)}>
-        <label>Логин<input name="username" required minLength={3} maxLength={64} pattern="[a-zA-Z0-9._-]+" autoComplete="off" /></label>
-        <label>Имя организатора<input name="displayName" required maxLength={200} /></label>
-        <label>Email<input name="email" type="email" maxLength={254} /></label>
-        <button className="primary-button" disabled={saving}>{saving ? "Создаём…" : "Создать организатора"}</button>
+        <label>Email организатора<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
+        <button className="primary-button" disabled={saving}>{saving ? "Отправляем…" : "Отправить приглашение"}</button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
       {created && (
         <div className="workspace-card credential-card" role="status">
-          <strong>Учётная запись создана</strong>
-          <p>Передайте эти данные организатору безопасным способом. Временный пароль показывается только сейчас; при первом входе его нужно заменить.</p>
-          <dl>
-            <div><dt>Логин</dt><dd>{created.username}</dd></div>
-            <div><dt>Временный пароль</dt><dd><code>{created.temporary_password}</code></dd></div>
-          </dl>
+          <strong>Приглашение создано для {created.email}</strong>
+          <p>Приглашение отправлено по email. Ссылка действует 24 часа.</p>
+          {created.invitation_url && <div><p>Локальная ссылка для проверки (доступна только администратору):</p><code>{created.invitation_url}</code></div>}
           <button className="quiet-button" onClick={() => setCreated(null)}>Скрыть данные</button>
         </div>
       )}
@@ -898,7 +904,7 @@ export function RegistrationPage() {
 export function ScoringPage() {
   const [accountLogin, setAccountLogin] = useState(false);
   return accountLogin
-    ? <OidcScoringPage />
+    ? <AccountScoringPage />
     : <CodeScoringPage onUseAccountLogin={() => setAccountLogin(true)} />;
 }
 
@@ -1057,9 +1063,9 @@ function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void 
   );
 }
 
-function OidcScoringPage() {
+function AccountScoringPage() {
   const { user } = useAuth();
-  const accessToken = user?.access_token ?? "";
+  const accessToken = "";
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [stations, setStations] = useState<StationSummary[]>([]);
@@ -1077,7 +1083,7 @@ function OidcScoringPage() {
   const loading = !eventsLoaded || (selectedEventId !== null && stationsEventId !== selectedEventId);
 
   useEffect(() => {
-    if (!accessToken) return;
+    if (!user) return;
     const controller = new AbortController();
     let active = true;
     getEvents(accessToken, controller.signal)
@@ -1097,7 +1103,7 @@ function OidcScoringPage() {
       active = false;
       controller.abort();
     };
-  }, [accessToken]);
+  }, [accessToken, user]);
 
   useEffect(() => {
     if (!accessToken || selectedEventId === null) return;
@@ -1256,7 +1262,7 @@ function OidcScoringPage() {
               )}
             </section>
           )}
-          <p className="backend-gap-note">Проверка кода площадки пока не поддерживается Backend. Сейчас сотрудник входит через Keycloak; право на площадку проверяется сервером. Повторное начисление и шкала также проверяются сервером и базой.</p>
+          <p className="backend-gap-note">Доступ к площадке определяется коротким кодом, привязанным организатором. Повторное начисление и допустимая шкала проверяются сервером и базой данных.</p>
         </>
       )}
     </AuthenticatedPage>

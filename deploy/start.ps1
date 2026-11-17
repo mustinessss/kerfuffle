@@ -35,10 +35,6 @@ if (-not (Test-Path $environmentFile)) {
         "APP_DB_PASSWORD=$(New-RandomHexSecret)"
     )
     $content = $content.Replace(
-        "KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD=generate-on-first-start",
-        "KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD=$(New-RandomHexSecret)"
-    )
-    $content = $content.Replace(
         "ACCESS_CODE_HASH_SECRET=generate-on-first-start",
         "ACCESS_CODE_HASH_SECRET=$(New-RandomHexSecret)"
     )
@@ -53,7 +49,6 @@ if (-not (Test-Path $environmentFile)) {
 $requiredSecrets = @(
     "POSTGRES_PASSWORD",
     "APP_DB_PASSWORD",
-    "KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
     "ACCESS_CODE_HASH_SECRET"
 )
 $environmentContent = [System.IO.File]::ReadAllText($environmentFile)
@@ -83,6 +78,6 @@ finally {
 Write-Host ""
 Write-Host "Kerfuffle containers started."
 Write-Host "Web app:   http://localhost:5173"
-Write-Host "Keycloak:  http://localhost:8080"
 Write-Host "Local credentials are stored in deploy/.env; do not share or package that file."
+Write-Host "Create the first administrator with the instructions in deploy/README.md."
 Write-Host "Stop without deleting data: docker compose --env-file deploy/.env -f deploy/compose.yaml down"

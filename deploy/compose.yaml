@@ -17,19 +17,6 @@ services:
       retries: 20
     restart: unless-stopped
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.3.3
-    command: ["start-dev", "--import-realm", "--hostname", "http://localhost:8080"]
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?Set in deploy/.env}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?Run deploy/start.ps1 to create local secrets}
-    ports:
-      - "${KEYCLOAK_BIND_ADDRESS:-127.0.0.1}:8080:8080"
-    volumes:
-      - ../keycloak/kerfuffle-realm.json:/opt/keycloak/data/import/kerfuffle-realm.json:ro
-      - keycloak-data:/opt/keycloak/data/h2
-    restart: unless-stopped
-
   migrate:
     build:
       context: ../backend
@@ -50,14 +37,15 @@ services:
     environment:
       ENVIRONMENT: development
       DATABASE_URL: postgresql+psycopg://kerfuffle_app:${APP_DB_PASSWORD}@db:5432/kerfuffle
-      OIDC_ISSUER: http://localhost:8080/realms/kerfuffle
-      OIDC_AUDIENCE: kerfuffle-api
-      OIDC_JWKS_URL: http://keycloak:8080/realms/kerfuffle/protocol/openid-connect/certs
-      KEYCLOAK_ADMIN_BASE_URL: http://keycloak:8080
-      KEYCLOAK_ADMIN_REALM: kerfuffle
-      KEYCLOAK_ADMIN_CLIENT_ID: kerfuffle-user-provisioner
-      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
       ACCESS_CODE_HASH_SECRET: ${ACCESS_CODE_HASH_SECRET:?Run deploy/start.ps1 to create local secrets}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
+      APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
     depends_on:
       db:
         condition: service_healthy
@@ -82,8 +70,6 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api/v1
-        VITE_OIDC_AUTHORITY: http://localhost:8080/realms/kerfuffle
-        VITE_OIDC_CLIENT_ID: kerfuffle-web
     ports:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:5173:80"
     depends_on:
@@ -93,4 +79,3 @@ services:
 
 volumes:
   postgres-data:
-  keycloak-data:

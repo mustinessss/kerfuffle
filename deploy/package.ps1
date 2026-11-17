@@ -21,8 +21,7 @@ $includedPaths = @(
     "backend",
     "database",
     "deploy",
-    "frontend",
-    "keycloak"
+    "frontend"
 )
 $excludedDirectories = @(
     ".git",

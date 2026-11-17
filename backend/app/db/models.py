@@ -62,11 +62,19 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("btrim(display_name) <> ''", name="users_display_name_not_empty"),
+        Index(
+            "users_email_ci_unique",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text("email IS NOT NULL"),
+            sqlite_where=text("email IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
-    auth_subject: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    legacy_identity_subject: Mapped[str | None] = mapped_column(Text, unique=True)
     email: Mapped[str | None] = mapped_column(Text)
+    password_hash: Mapped[str | None] = mapped_column(Text)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
@@ -77,6 +85,85 @@ class User(Base):
     is_organizer: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("user_sessions_user_expiry_idx", "user_id", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    csrf_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OrganizerInvitation(Base):
+    __tablename__ = "organizer_invitations"
+    __table_args__ = (
+        Index("organizer_invitations_email_status_idx", "email", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        Index("password_reset_user_expiry_idx", "user_id", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuthAttempt(Base):
+    __tablename__ = "auth_attempts"
+    __table_args__ = (
+        Index("auth_attempts_ip_time_idx", "ip_hash", "created_at"),
+        Index("auth_attempts_email_time_idx", "email_hash", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    ip_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    email_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
