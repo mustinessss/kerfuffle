@@ -22,7 +22,7 @@ fi
 # Debian variants do not necessarily use the same postgres UID/GID.
 read -r POSTGRES_UID POSTGRES_GID < <(
   docker run --rm --entrypoint sh "$POSTGRES_IMAGE" \
-    -c 'printf "%s %s\\n" "$(id -u postgres)" "$(id -g postgres)"'
+    -c 'printf "%s %s\n" "$(id -u postgres)" "$(id -g postgres)"'
 )
 if [[ ! "$POSTGRES_UID" =~ ^[0-9]+$ || ! "$POSTGRES_GID" =~ ^[0-9]+$ ]]; then
   echo "Could not determine postgres UID/GID from $POSTGRES_IMAGE." >&2
