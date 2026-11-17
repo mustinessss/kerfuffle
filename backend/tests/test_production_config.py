@@ -80,3 +80,26 @@ def test_incomplete_or_insecure_production_configuration_is_rejected(overrides):
 
 def test_development_settings_remain_permissive():
     assert Settings(environment="development").environment == "development"
+
+
+
+def test_production_migration_mode_allows_postgres_owner_only_for_migrations():
+    settings = production_settings(
+        database_url=(
+            "postgresql+psycopg://postgres:strong-password"
+            "@db.example.test:5432/kerfuffle?sslmode=verify-full"
+        ),
+        database_migration_mode=True,
+    )
+
+    assert settings.database_migration_mode is True
+
+
+def test_production_migration_mode_does_not_allow_postgres_without_explicit_flag():
+    with pytest.raises(ValidationError, match="dedicated non-default database role"):
+        production_settings(
+            database_url=(
+                "postgresql+psycopg://postgres:strong-password"
+                "@db.example.test:5432/kerfuffle?sslmode=verify-full"
+            ),
+        )
