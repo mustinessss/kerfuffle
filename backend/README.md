@@ -83,7 +83,9 @@ The application is not production-ready until all of these are in place:
    `APP_ALLOWED_ORIGINS` with the HTTPS origin.
 2. Set `ENVIRONMENT=production`. Startup validates HTTPS origins, SMTP (or
    explicit manual-link mode), a 32+ character code-hash secret, a dedicated DB
-   role, and PostgreSQL TLS. Manual links require an externally reachable
+   role, and PostgreSQL TLS. The one-shot Alembic migration service sets
+   `DATABASE_MIGRATION_MODE=true` to use the database owner; this exception is
+   not set on the long-running backend. Manual links require an externally reachable
    `APP_PUBLIC_URL` over HTTPS; never use the local HTTP Compose setup publicly.
    `/docs`, `/redoc`, and `/openapi.json` are disabled in production.
 3. Keep secrets in the hosting provider's secret manager. Enforce strong
