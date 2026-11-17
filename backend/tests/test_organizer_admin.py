@@ -15,7 +15,7 @@ from app.api.v1.organizer_admin import (
     accept_invitation,
     complete_password_reset,
     create_invitation,
-    create_local_password_reset_link,
+    create_manual_password_reset_link,
     revoke_invitation,
     request_password_reset,
 )
@@ -72,7 +72,30 @@ def create_test_invitation(session: Session, admin: User):
         InvitationCreate(email="ORGANIZER@example.test"),
         admin,
         session,
-        Settings(),
+        Settings(
+            smtp_host=None,
+            smtp_user=None,
+            smtp_password=None,
+            smtp_from=None,
+        ),
+    )
+
+
+def production_manual_settings() -> Settings:
+    return Settings(
+        environment="production",
+        database_url=(
+            "postgresql+psycopg://kerfuffle_app:strong-password"
+            "@db.example.test:5432/kerfuffle?sslmode=verify-full"
+        ),
+        access_code_hash_secret="a" * 48,
+        app_public_url="https://kerfuffle.example.test",
+        app_allowed_origins="https://kerfuffle.example.test",
+        manual_auth_links_enabled=True,
+        smtp_host=None,
+        smtp_user=None,
+        smtp_password=None,
+        smtp_from=None,
     )
 
 
@@ -89,6 +112,55 @@ def test_non_system_admin_cannot_invite_organizer(db_session):
             Settings(),
         )
     assert error.value.status_code == 403
+
+
+def test_production_manual_invitation_returns_link_only_to_admin(db_session):
+    admin = admin_user(db_session)
+
+    result = create_invitation(
+        InvitationCreate(email="manual@example.test"),
+        admin,
+        db_session,
+        production_manual_settings(),
+    )
+
+    token = parse_qs(urlsplit(result["invitation_url"]).query)["token"][0]
+    invitation = db_session.query(OrganizerInvitation).one()
+    assert result["delivery_method"] == "manual"
+    assert result["status"] == "sent"
+    assert invitation.token_hash == hash_token(token)
+    assert invitation.token_hash != token
+
+
+def test_smtp_invitation_takes_precedence_over_manual_delivery(
+    db_session,
+    monkeypatch,
+):
+    admin = admin_user(db_session)
+    sent_messages = []
+    monkeypatch.setattr(
+        "app.api.v1.organizer_admin.send_email",
+        lambda *args: sent_messages.append(args),
+    )
+    settings = production_manual_settings().model_copy(
+        update={
+            "smtp_host": "smtp.example.test",
+            "smtp_user": "mailer",
+            "smtp_password": "mailer-password",
+            "smtp_from": "noreply@example.test",
+        }
+    )
+
+    result = create_invitation(
+        InvitationCreate(email="email@example.test"),
+        admin,
+        db_session,
+        settings,
+    )
+
+    assert result["delivery_method"] == "email"
+    assert result["invitation_url"] is None
+    assert len(sent_messages) == 1
 
 
 def test_invitation_stores_only_token_hash_and_accepts_once(db_session):
@@ -285,7 +357,7 @@ def test_superuser_can_create_a_local_reset_link(db_session):
     db_session.add(account)
     db_session.commit()
 
-    result = create_local_password_reset_link(
+    result = create_manual_password_reset_link(
         account.id,
         admin,
         db_session,
@@ -297,3 +369,74 @@ def test_superuser_can_create_a_local_reset_link(db_session):
     assert result["expires_in_minutes"] == 30
     assert reset.token_hash == hash_token(token)
     assert reset.token_hash != token
+
+
+def test_superuser_can_create_a_manual_reset_link_in_production(db_session):
+    admin = admin_user(db_session)
+    account = User(
+        email="manual-reset@example.test",
+        display_name="Organizer",
+        password_hash=hash_password("SecurePassword123"),
+        is_organizer=True,
+    )
+    db_session.add(account)
+    db_session.commit()
+
+    result = create_manual_password_reset_link(
+        account.id,
+        admin,
+        db_session,
+        production_manual_settings(),
+    )
+
+    token = parse_qs(urlsplit(result["reset_url"]).query)["token"][0]
+    reset = db_session.query(PasswordResetToken).one()
+    assert result["expires_in_minutes"] == 30
+    assert reset.token_hash == hash_token(token)
+    assert reset.token_hash != token
+
+
+def test_non_system_admin_cannot_create_a_manual_reset_link(db_session):
+    regular_user = User(email="regular@example.test", display_name="Regular")
+    db_session.add(regular_user)
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as error:
+        create_manual_password_reset_link(
+            1,
+            regular_user,
+            db_session,
+            production_manual_settings(),
+        )
+
+    assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("manual_links_enabled", [False, True])
+def test_production_reset_link_is_hidden_when_manual_delivery_is_not_active(
+    db_session,
+    manual_links_enabled,
+):
+    admin = admin_user(db_session)
+    account = User(
+        email="reset-disabled@example.test",
+        display_name="Organizer",
+        password_hash=hash_password("SecurePassword123"),
+        is_organizer=True,
+    )
+    db_session.add(account)
+    db_session.commit()
+    settings = production_manual_settings().model_copy(
+        update={
+            "manual_auth_links_enabled": manual_links_enabled,
+            "smtp_host": "smtp.example.test",
+            "smtp_user": "mailer",
+            "smtp_password": "mailer-password",
+            "smtp_from": "noreply@example.test",
+        }
+    )
+
+    with pytest.raises(HTTPException) as error:
+        create_manual_password_reset_link(account.id, admin, db_session, settings)
+
+    assert error.value.status_code == 404

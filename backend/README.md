@@ -62,8 +62,11 @@ hours. Password recovery links expire after 30 minutes and are single-use.
 Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and
 `SMTP_USE_TLS` to deliver invitations and recovery messages. Without SMTP,
 development mode returns invitation links only to an authenticated superuser;
-the same page can generate local reset links for testing. Production requires
-SMTP and will not expose local reset links.
+the same page can generate reset links for testing. Production requires SMTP
+unless `MANUAL_AUTH_LINKS_ENABLED=true`; with that explicit setting, only a
+system administrator can view and copy the one-time invitation or reset link
+for delivery through a trusted channel. SMTP takes precedence when configured,
+and the link is not shown in the admin UI.
 
 Legacy OIDC subject values are retained for migration/history only and are not
 accepted for login. Existing users should be matched and activated by their
@@ -78,8 +81,10 @@ The application is not production-ready until all of these are in place:
    proxy/load balancer, expose only that proxy publicly, and serve frontend and
    `/api` from the same origin. Configure `APP_PUBLIC_URL` and
    `APP_ALLOWED_ORIGINS` with the HTTPS origin.
-2. Set `ENVIRONMENT=production`. Startup validates HTTPS origins, SMTP, a
-   32+ character code-hash secret, a dedicated DB role, and PostgreSQL TLS.
+2. Set `ENVIRONMENT=production`. Startup validates HTTPS origins, SMTP (or
+   explicit manual-link mode), a 32+ character code-hash secret, a dedicated DB
+   role, and PostgreSQL TLS. Manual links require an externally reachable
+   `APP_PUBLIC_URL` over HTTPS; never use the local HTTP Compose setup publicly.
    `/docs`, `/redoc`, and `/openapi.json` are disabled in production.
 3. Keep secrets in the hosting provider's secret manager. Enforce strong
    passwords, protect administrator accounts with MFA at the hosting/identity

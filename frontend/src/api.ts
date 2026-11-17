@@ -103,6 +103,7 @@ export interface CreatedOrganizer {
   status: "sent" | "pending";
   expires_at: string;
   invitation_url: string | null;
+  delivery_method: "email" | "manual";
 }
 
 export interface AdminUser extends CurrentAccount {
@@ -324,7 +325,7 @@ export function setUserBlocked(userId: number, blocked: boolean) {
   });
 }
 
-export function createLocalPasswordResetLink(userId: number) {
+export function createManualPasswordResetLink(userId: number) {
   return requestJson<{ reset_url: string; expires_in_minutes: number }>(
     `/system-admin/users/${userId}/password-reset-link`,
     { method: "POST", body: {} },

@@ -27,6 +27,36 @@ def test_valid_production_configuration_is_accepted():
     assert production_settings().environment == "production"
 
 
+def test_production_manual_auth_links_allow_missing_smtp():
+    settings = production_settings(
+        smtp_host=None,
+        smtp_user=None,
+        smtp_password=None,
+        smtp_from=None,
+        manual_auth_links_enabled=True,
+    )
+
+    assert settings.manual_auth_links_enabled is True
+
+
+def test_production_without_smtp_requires_explicit_manual_link_setting():
+    with pytest.raises(ValidationError, match="MANUAL_AUTH_LINKS_ENABLED=true"):
+        production_settings(
+            smtp_host=None,
+            smtp_user=None,
+            smtp_password=None,
+            smtp_from=None,
+        )
+
+
+def test_manual_auth_links_do_not_allow_partial_smtp_configuration():
+    with pytest.raises(ValidationError, match="SMTP_HOST, SMTP_USER"):
+        production_settings(
+            smtp_host=None,
+            manual_auth_links_enabled=True,
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

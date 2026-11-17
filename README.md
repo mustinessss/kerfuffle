@@ -47,7 +47,8 @@ email из `/admin/users`. Короткие коды регистратора и
 ## Production minimum
 
 Перед публичным запуском нужны HTTPS reverse proxy, безопасное хранение
-секретов, SMTP, PostgreSQL с TLS и отдельной runtime-ролью, резервные копии с
-проверенным восстановлением, мониторинг, edge rate limiting и acceptance-тесты
-на staging. Подробный checklist находится в
+секретов, SMTP или явно включённая ручная передача одноразовых ссылок,
+PostgreSQL с TLS и отдельной runtime-ролью, резервные копии с проверенным
+восстановлением, мониторинг, edge rate limiting и acceptance-тесты на staging.
+Подробный checklist находится в
 [backend/README.md](./backend/README.md).

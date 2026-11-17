@@ -169,6 +169,9 @@ a.action-card:hover { background: #eee8dc; }
 .credential-card dt { color: var(--muted); font-size: 11px; }
 .credential-card dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
 .credential-card code, .access-code-value { padding: 8px 10px; background: #f3efe7; overflow-wrap: anywhere; font-size: 12px; }
+.copy-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.copy-link code { min-width: 0; overflow-wrap: anywhere; }
+.copy-link .form-error { flex-basis: 100%; }
 .access-entry-form { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 10px 12px; max-width: 620px; }
 .access-entry-form label { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 .access-entry-form input { width: 100%; min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }

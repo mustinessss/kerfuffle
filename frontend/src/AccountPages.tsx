@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import {
   acceptOrganizerInvitation,
   completePasswordReset,
-  createLocalPasswordResetLink,
+  createManualPasswordResetLink,
   getAdminInvitations,
   getAdminUsers,
   getEvents,
@@ -17,6 +17,7 @@ import {
 import type { AdminInvitation, AdminUser, EventSummary } from "./api";
 import { ApiError } from "./api";
 import { useAuth } from "./authContext";
+import { CopyLink } from "./CopyLink";
 
 function messageFor(error: unknown): string {
   return error instanceof ApiError
@@ -166,7 +167,7 @@ export function ForgotPasswordPage() {
     <main className="workspace-page">
       <div className="workspace-heading"><p className="eyebrow">ВОССТАНОВЛЕНИЕ ДОСТУПА</p><h1>Сброс пароля<span className="accent-dot">.</span></h1></div>
       {submitted
-        ? <div className="workspace-card">Если активный аккаунт с таким email существует, инструкция по сбросу будет отправлена на него.</div>
+        ? <div className="workspace-card">Если активный аккаунт с таким email существует, инструкция по сбросу будет отправлена на него. Если письмо не пришло, обратитесь к системному администратору.</div>
         : <form className="workspace-card workspace-form login-form" onSubmit={(event) => void submit(event)}>
             <label>Email<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
             <ErrorMessage>{error}</ErrorMessage>
@@ -275,10 +276,13 @@ export function AdminUsersPage() {
     setError("");
     setMessage("");
     setInviteUrl("");
+    setResetUrl("");
     try {
       const invitation = await inviteOrganizer(String(new FormData(form).get("email") ?? "").trim());
       setInviteUrl(invitation.invitation_url ?? "");
-      setMessage(`Приглашение отправлено: ${invitation.email}`);
+      setMessage(invitation.delivery_method === "email"
+        ? `Приглашение отправлено по email: ${invitation.email}.`
+        : `Создана ссылка-приглашение для ${invitation.email}.`);
       form.reset();
       await refresh();
     } catch (requestError) {
@@ -291,6 +295,8 @@ export function AdminUsersPage() {
   async function runAction(action: () => Promise<unknown>, success: string) {
     setError("");
     setMessage("");
+    setInviteUrl("");
+    setResetUrl("");
     try {
       await action();
       setMessage(success);
@@ -300,13 +306,32 @@ export function AdminUsersPage() {
     }
   }
 
-  async function createResetLink(account: AdminUser) {
+  async function resendOrganizerInvitation(invitationId: number) {
     setError("");
+    setMessage("");
+    setInviteUrl("");
     setResetUrl("");
     try {
-      const result = await createLocalPasswordResetLink(account.id);
+      const invitation = await resendInvitation(invitationId);
+      setInviteUrl(invitation.invitation_url ?? "");
+      setMessage(invitation.delivery_method === "email"
+        ? `Новое приглашение отправлено по email: ${invitation.email}.`
+        : `Создана новая ссылка-приглашение для ${invitation.email}.`);
+      await refresh();
+    } catch (requestError) {
+      setError(messageFor(requestError));
+    }
+  }
+
+  async function createResetLink(account: AdminUser) {
+    setError("");
+    setMessage("");
+    setInviteUrl("");
+    setResetUrl("");
+    try {
+      const result = await createManualPasswordResetLink(account.id);
       setResetUrl(result.reset_url);
-      setMessage(`Ссылка сброса пароля создана для ${account.email}.`);
+      setMessage(`Создана ссылка сброса пароля для ${account.email}.`);
     } catch (requestError) {
       setError(messageFor(requestError));
     }
@@ -318,12 +343,12 @@ export function AdminUsersPage() {
       {loading && <div className="state-box" role="status"><span className="spinner" />Загружаем пользователей…</div>}
       <ErrorMessage>{error}</ErrorMessage>
       {message && <p className="success-message" role="status">{message}</p>}
-      {inviteUrl && <div className="workspace-card credential-card"><strong>Локальная ссылка приглашения</strong><p>Ссылка показана только системному администратору для локального тестирования без SMTP.</p><code>{inviteUrl}</code></div>}
-      {resetUrl && <div className="workspace-card credential-card"><strong>Локальная ссылка сброса</strong><p>Одноразовая ссылка действует 30 минут и показана только системному администратору.</p><code>{resetUrl}</code></div>}
+      {inviteUrl && <div className="workspace-card credential-card"><strong>Ссылка для приглашения</strong><p>Одноразовая ссылка действует 24 часа. Передавайте её только самому организатору по доверенному каналу.</p><CopyLink url={inviteUrl} /></div>}
+      {resetUrl && <div className="workspace-card credential-card"><strong>Ссылка сброса пароля</strong><p>Одноразовая ссылка действует 30 минут. Передавайте её только владельцу аккаунта по доверенному каналу.</p><CopyLink url={resetUrl} /></div>}
       <form className="workspace-card workspace-form event-create-form" onSubmit={(event) => void submitInvitation(event)}>
         <h3>Пригласить организатора</h3>
         <label>Email<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
-        <button className="primary-button" disabled={saving}>{saving ? "Отправляем…" : "Отправить приглашение"}</button>
+        <button className="primary-button" disabled={saving}>{saving ? "Создаём приглашение…" : "Создать приглашение"}</button>
       </form>
       <section className="workspace-section">
         <div className="workspace-section-heading"><div><p className="eyebrow">УЧЁТНЫЕ ЗАПИСИ</p><h2>Пользователи</h2></div></div>
@@ -331,7 +356,7 @@ export function AdminUsersPage() {
           <article className="workspace-card admin-user-card" key={account.id}>
             <div className="admin-user-heading"><div><strong>{account.display_name}</strong><span>{account.email ?? "Без email"}</span></div><span>{account.is_system_admin ? "Системный администратор" : account.is_active ? "Активен" : "Заблокирован"}</span></div>
             {!account.is_system_admin && <button className="quiet-button" onClick={() => void runAction(() => setUserBlocked(account.id, account.is_active), account.is_active ? "Пользователь заблокирован." : "Пользователь разблокирован.")}>{account.is_active ? "Заблокировать" : "Разблокировать"}</button>}
-            {!account.is_system_admin && account.is_active && <button className="quiet-button" onClick={() => void createResetLink(account)}>Создать локальную ссылку сброса</button>}
+            {!account.is_system_admin && account.is_active && <button className="quiet-button" onClick={() => void createResetLink(account)}>Создать ссылку сброса</button>}
             {account.is_organizer && (
               <div className="admin-event-assignments">
                 <span>Мероприятия</span>
@@ -350,7 +375,7 @@ export function AdminUsersPage() {
           <article className="workspace-card admin-user-card" key={invitation.id}>
             <div className="admin-user-heading"><div><strong>{invitation.email}</strong><span>Действует до {new Date(invitation.expires_at).toLocaleString()}</span></div><span>{invitation.status}</span></div>
             {invitation.status !== "used" && invitation.status !== "revoked" && <button className="quiet-button" onClick={() => void runAction(() => revokeInvitation(invitation.id), "Приглашение отозвано.")}>Отозвать</button>}
-            {(invitation.status === "expired" || invitation.status === "revoked") && <button className="quiet-button" onClick={() => void runAction(() => resendInvitation(invitation.id), "Новое приглашение создано.")}>Отправить новое приглашение</button>}
+            {(invitation.status === "expired" || invitation.status === "revoked") && <button className="quiet-button" onClick={() => void resendOrganizerInvitation(invitation.id)}>Создать новое приглашение</button>}
           </article>
         ))}
         {!invitations.length && !loading && <p className="empty-workspace">Приглашений пока нет.</p>}

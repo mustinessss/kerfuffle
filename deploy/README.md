@@ -71,8 +71,13 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --force-recre
 ```
 
 Without SMTP, development mode shows invitation links only to a signed-in
-system administrator. The user-management page can also create a local
-single-use password-reset link (30-minute expiry) for testing.
+system administrator. The user-management page can also create a single-use
+password-reset link (30-minute expiry) for testing. This Compose package uses
+HTTP and is for local use only; do not expose it on a public IP. For a separate
+HTTPS production deployment, `MANUAL_AUTH_LINKS_ENABLED=true` allows system
+administrators to copy invitation and password-reset links for handoff through
+a trusted channel. Configure an externally reachable HTTPS `APP_PUBLIC_URL`;
+the links expire after 24 hours (invitations) or 30 minutes (password resets).
 
 ## Data and production
 

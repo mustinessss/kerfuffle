@@ -144,12 +144,18 @@ def _send_or_expose_invitation(
         session.commit()
         return None
 
-    if settings.environment.strip().lower() == "production":
+    if (
+        settings.environment.strip().lower() == "production"
+        and not settings.manual_auth_links_enabled
+    ):
         invitation.revoked_at = _now()
         session.commit()
         raise HTTPException(
             status_code=503,
-            detail="Отправка приглашений не настроена: администратор должен настроить SMTP.",
+            detail=(
+                "Настройте SMTP или включите ручную выдачу ссылок "
+                "системному администратору."
+            ),
         )
 
     invitation.sent_at = _now()
@@ -223,7 +229,7 @@ def create_invitation(
     session.add(invitation)
     session.commit()
     try:
-        development_url = _send_or_expose_invitation(
+        invitation_url = _send_or_expose_invitation(
             invitation, token, session, settings
         )
     except HTTPException:
@@ -233,7 +239,8 @@ def create_invitation(
         "email": invitation.email,
         "status": _invitation_status(invitation, _now()),
         "expires_at": invitation.expires_at,
-        "invitation_url": development_url,
+        "invitation_url": invitation_url,
+        "delivery_method": "email" if smtp_is_configured(settings) else "manual",
     }
 
 
@@ -525,14 +532,20 @@ def unblock_user(
 
 
 @router.post("/users/{user_id}/password-reset-link")
-def create_local_password_reset_link(
+def create_manual_password_reset_link(
     user_id: int,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
     _require_superadmin(user)
-    if settings.environment.strip().lower() == "production":
+    if (
+        settings.environment.strip().lower() == "production"
+        and (
+            not settings.manual_auth_links_enabled
+            or smtp_is_configured(settings)
+        )
+    ):
         raise HTTPException(status_code=404, detail="Страница не найдена.")
     account = session.get(User, user_id)
     if account is None or not account.is_active or not account.email:

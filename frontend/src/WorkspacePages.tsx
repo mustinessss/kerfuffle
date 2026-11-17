@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
 import { ApiError } from "./api";
+import { CopyLink } from "./CopyLink";
 import {
   createAccessCode,
   createEvent,
@@ -32,6 +33,7 @@ import {
 import type {
   AccessCodeSummary,
   CurrentAccount,
+  CreatedOrganizer,
   EventSummary,
   ParticipantLookup,
   RegisteredParticipant,
@@ -365,7 +367,7 @@ export function OrganizerPage() {
 }
 
 function OrganizerProvisioningPanel() {
-  const [created, setCreated] = useState<{ email: string; invitation_url: string | null } | null>(null);
+  const [created, setCreated] = useState<CreatedOrganizer | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -395,14 +397,15 @@ function OrganizerProvisioningPanel() {
       </div>
       <form className="workspace-form event-create-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>Email организатора<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
-        <button className="primary-button" disabled={saving}>{saving ? "Отправляем…" : "Отправить приглашение"}</button>
+        <button className="primary-button" disabled={saving}>{saving ? "Создаём приглашение…" : "Создать приглашение"}</button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
       {created && (
         <div className="workspace-card credential-card" role="status">
           <strong>Приглашение создано для {created.email}</strong>
-          <p>Приглашение отправлено по email. Ссылка действует 24 часа.</p>
-          {created.invitation_url && <div><p>Локальная ссылка для проверки (доступна только администратору):</p><code>{created.invitation_url}</code></div>}
+          {created.delivery_method === "email"
+            ? <p>Приглашение отправлено по email. Ссылка действует 24 часа.</p>
+            : <div><p>Ссылка действует 24 часа. Передавайте её только организатору по доверенному каналу.</p>{created.invitation_url && <CopyLink url={created.invitation_url} />}</div>}
           <button className="quiet-button" onClick={() => setCreated(null)}>Скрыть данные</button>
         </div>
       )}

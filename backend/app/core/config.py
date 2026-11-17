@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str | None = None
     smtp_use_tls: bool = True
+    manual_auth_links_enabled: bool = False
 
     @model_validator(mode="after")
     def require_production_configuration(self):
@@ -50,8 +51,23 @@ class Settings(BaseSettings):
             missing.append("APP_ALLOWED_ORIGINS must include APP_PUBLIC_URL origin")
         if any(urlsplit(origin).scheme.lower() != "https" for origin in allowed_origins):
             missing.append("APP_ALLOWED_ORIGINS must use HTTPS in production")
-        if not all((self.smtp_host, self.smtp_user, self.smtp_password, self.smtp_from)):
-            missing.append("SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM")
+        smtp_values = (
+            self.smtp_host,
+            self.smtp_user,
+            self.smtp_password,
+            self.smtp_from,
+        )
+        smtp_configured = all(smtp_values)
+        if any(smtp_values) and not smtp_configured:
+            missing.append(
+                "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM "
+                "must be configured together"
+            )
+        elif not smtp_configured and not self.manual_auth_links_enabled:
+            missing.append(
+                "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM or "
+                "MANUAL_AUTH_LINKS_ENABLED=true"
+            )
 
         database_url = make_url(self.database_url)
         if database_url.username in (None, "postgres") or not database_url.password:
