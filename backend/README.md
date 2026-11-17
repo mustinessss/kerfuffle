@@ -137,14 +137,18 @@ Important endpoints:
   `/api/v1/public/access/scores`
 
 Registration numbers are sequential six-digit numbers within an event and are
-allocated while locking the event row. QR tokens are random UUIDs. Organizers
-and registrars can search and list participants. Station operators only see
-their assigned stations and receive no optional personal data. Scores are
-limited to the assigned station and its configured scale. Public leaderboards
-include participant names, registration numbers, station progress, zero-score
-participants, and tied places; contacts and other optional personal data are
-not included. Score corrections and annulments require a reason and append an
-immutable audit record.
+allocated while locking the event row. Participant lookup uses only that
+number; QR lookup and QR generation are not part of the active application.
+Migration `0007_nullable_legacy_qr_token` preserves existing database values
+but permits new registrations without them. The legacy column can be removed
+only in a later, separately planned migration after the compatibility window.
+Organizers and registrars can search and list participants. Station operators
+only see their assigned stations and receive no optional personal data. Scores
+are limited to the assigned station and its configured scale. Public
+leaderboards include participant names, registration numbers, station
+progress, zero-score participants, and tied places; contacts and other
+optional personal data are not included. Score corrections and annulments
+require a reason and append an immutable audit record.
 
 ## Frontend
 

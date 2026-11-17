@@ -1,6 +1,4 @@
 from datetime import date, datetime
-from uuid import uuid4
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select
@@ -76,7 +74,6 @@ def participant_response(
         "first_name": person.first_name,
         "last_name": person.last_name,
         "registration_number": registration.registration_number,
-        "qr_token": str(registration.qr_token),
         "registered_at": registration.registered_at,
     }
 
@@ -139,7 +136,6 @@ def register_participant_record(
         event_id=event_id,
         person_id=person.id,
         registration_number=_next_registration_number(registration_count),
-        qr_token=uuid4(),
     )
     session.add(registration)
     try:

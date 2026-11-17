@@ -31,6 +31,7 @@ def test_registration_and_score_constraints_are_present():
     scores = models.Score.__table__
     stations = models.Station.__table__
 
+    assert "qr_token" not in registrations.c
     assert "one_registration_per_person_event" in {
         constraint.name for constraint in registrations.constraints
     }

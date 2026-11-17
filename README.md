@@ -7,7 +7,8 @@
 
 - `backend/` — FastAPI, PostgreSQL, Alembic и встроенная авторизация.
 - `frontend/` — React/Vite/TypeScript: публичный рейтинг и рабочие кабинеты.
-- `database/` — SQL-схема и ограниченная runtime-роль PostgreSQL.
+- `database/` — исторический SQL-снимок и SQL для ограниченной runtime-роли
+  PostgreSQL. Актуальная структура БД управляется только миграциями Alembic.
 - `deploy/` — локальный Docker Compose-пакет для переноса на Windows-машину.
 - `PROJECT_STATUS.md` — актуальное состояние и оставшиеся задачи.
 

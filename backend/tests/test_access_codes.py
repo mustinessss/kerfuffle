@@ -1,8 +1,6 @@
 from datetime import date
 import hashlib
 import hmac
-from uuid import UUID
-
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -235,7 +233,6 @@ def test_station_code_is_already_scoped_and_checks_server_score_scale(
         event_id=access_setup["event"].id,
         person_id=participant.id,
         registration_number="000001",
-        qr_token=UUID("a1111111-1111-4111-8111-111111111111"),
     )
     db_session.add(registration)
     db_session.commit()

@@ -1,5 +1,4 @@
 from datetime import date
-from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -93,25 +92,21 @@ def scoring_setup(db_session):
             event_id=event_record.id,
             person_id=people[0].id,
             registration_number="000001",
-            qr_token=UUID("a1111111-1111-4111-8111-111111111111"),
         ),
         EventParticipant(
             event_id=event_record.id,
             person_id=people[1].id,
             registration_number="000002",
-            qr_token=UUID("a2222222-2222-4222-8222-222222222222"),
         ),
         EventParticipant(
             event_id=event_record.id,
             person_id=people[2].id,
             registration_number="000003",
-            qr_token=UUID("a3333333-3333-4333-8333-333333333333"),
         ),
         EventParticipant(
             event_id=other_event.id,
             person_id=people[3].id,
             registration_number="000001",
-            qr_token=UUID("a4444444-4444-4444-8444-444444444444"),
         ),
     ]
     db_session.add_all(registrations)
@@ -146,17 +141,11 @@ def scoring_setup(db_session):
     }
 
 
-def test_operator_looks_up_participant_by_qr_and_number(
+def test_operator_looks_up_participant_by_six_digit_number(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
     operator = scoring_setup["operator"]
-    qr_result = lookup_participant(
-        station.id,
-        ParticipantLookup(qr_token=scoring_setup["registrations"][0].qr_token),
-        operator,
-        db_session,
-    )
     number_result = lookup_participant(
         station.id,
         ParticipantLookup(registration_number="000001"),
@@ -164,7 +153,6 @@ def test_operator_looks_up_participant_by_qr_and_number(
         db_session,
     )
 
-    assert qr_result["registration_number"] == "000001"
     assert number_result["first_name"] == "Ada"
     assert number_result["already_scored"] is False
     assert "phone" not in number_result

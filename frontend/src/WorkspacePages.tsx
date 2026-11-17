@@ -222,7 +222,6 @@ export function OrganizerPage() {
 
   async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const name = String(form.get("eventName") ?? "").trim();
@@ -230,7 +229,7 @@ export function OrganizerPage() {
     try {
       setError("");
       setActionMessage("");
-      const created = await createEvent(token, { name, event_date: eventDate });
+      const created = await createEvent({ name, event_date: eventDate });
       setEvents((current) => [...current, created]);
       setSelectedEventId(created.id);
       setActionMessage("Мероприятие создано.");
@@ -1106,7 +1105,7 @@ function AccountScoringPage() {
   }, [accessToken, user]);
 
   useEffect(() => {
-    if (!accessToken || selectedEventId === null) return;
+    if (selectedEventId === null) return;
     const controller = new AbortController();
     let active = true;
     getStations(selectedEventId, accessToken, controller.signal)
@@ -1138,7 +1137,7 @@ function AccountScoringPage() {
 
   async function handleLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedStation || !accessToken) return;
+    if (!selectedStation) return;
     setWorking(true);
     setError("");
     setSuccess("");
@@ -1159,7 +1158,7 @@ function AccountScoringPage() {
   }
 
   async function handleSubmitScore() {
-    if (!selectedStation || !participant || participant.already_scored || !accessToken) return;
+    if (!selectedStation || !participant || participant.already_scored) return;
     setWorking(true);
     setError("");
     setSuccess("");
@@ -1185,86 +1184,84 @@ function AccountScoringPage() {
     <AuthenticatedPage title="Начисление баллов" description="Войдите под учётной записью, которой назначена нужная площадка.">
       {loading && <AuthLoading />}
       {error && <p className="form-error" role="alert">{error}</p>}
-      {accessToken && (
-        <>
-          <section className="workspace-card scoring-controls">
-            <label>Мероприятие
-              <select value={selectedEventId ?? ""} onChange={(event) => {
-                setSelectedEventId(Number(event.target.value));
-                setSelectedStationId(null);
-                setParticipant(null);
-                setRegistrationNumber("");
-                setPoints(0);
-                setSuccess("");
-              }}>
-                {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-            <label>Ваша площадка
-              <select value={selectedStationId ?? ""} onChange={(event) => {
-                const stationId = Number(event.target.value);
-                setSelectedStationId(stationId);
-                setParticipant(null);
-                setRegistrationNumber("");
-                setPoints(visibleStations.find((station) => station.id === stationId)?.score_min ?? 0);
-                setSuccess("");
-              }}>
-                {visibleStations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-              </select>
-            </label>
-            {selectedStation && <p className="scoring-scale">{stationSummary}</p>}
-            {!loading && selectedEventId !== null && visibleStations.length === 0 && <p className="backend-gap-note">Нет доступных площадок. Проверьте назначение роли для мероприятия.</p>}
-          </section>
-          {selectedStation && (
-            <section className="workspace-card scoring-card">
-              <form className="lookup-form" onSubmit={(event) => void handleLookup(event)}>
-                <label htmlFor="participant-code">Шестизначный номер участника</label>
-                <div>
-                  <input
-                    id="participant-code"
-                    inputMode="numeric"
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    required
-                    value={registrationNumber}
-                    onChange={(event) => setRegistrationNumber(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                    placeholder="000001"
-                  />
-                  <button className="primary-button" disabled={working || registrationNumber.length !== 6}>{working ? "Ищем…" : "Найти"}</button>
-                </div>
-              </form>
-              {participant && (
-                <div className="participant-confirmation">
-                  <p className="eyebrow">УЧАСТНИК НАЙДЕН</p>
-                  <h2>{participant.first_name} {participant.last_name}</h2>
-                  <p>Номер {participant.registration_number}</p>
-                  {participant.already_scored ? (
-                    <div className="already-scored-message" role="status">
-                      {participant.score?.is_annulled
-                        ? "Результат аннулирован организатором. Повторное начисление на этой площадке запрещено."
-                        : <>Эта площадка уже пройдена. Ранее начислено <strong>{participant.score?.points ?? 0}</strong> баллов.</>}
+      <>
+        <section className="workspace-card scoring-controls">
+          <label>Мероприятие
+            <select value={selectedEventId ?? ""} onChange={(event) => {
+              setSelectedEventId(Number(event.target.value));
+              setSelectedStationId(null);
+              setParticipant(null);
+              setRegistrationNumber("");
+              setPoints(0);
+              setSuccess("");
+            }}>
+              {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>Ваша площадка
+            <select value={selectedStationId ?? ""} onChange={(event) => {
+              const stationId = Number(event.target.value);
+              setSelectedStationId(stationId);
+              setParticipant(null);
+              setRegistrationNumber("");
+              setPoints(visibleStations.find((station) => station.id === stationId)?.score_min ?? 0);
+              setSuccess("");
+            }}>
+              {visibleStations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
+            </select>
+          </label>
+          {selectedStation && <p className="scoring-scale">{stationSummary}</p>}
+          {!loading && selectedEventId !== null && visibleStations.length === 0 && <p className="backend-gap-note">Нет доступных площадок. Проверьте назначение роли для мероприятия.</p>}
+        </section>
+        {selectedStation && (
+          <section className="workspace-card scoring-card">
+            <form className="lookup-form" onSubmit={(event) => void handleLookup(event)}>
+              <label htmlFor="participant-code">Шестизначный номер участника</label>
+              <div>
+                <input
+                  id="participant-code"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  required
+                  value={registrationNumber}
+                  onChange={(event) => setRegistrationNumber(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="000001"
+                />
+                <button className="primary-button" disabled={working || registrationNumber.length !== 6}>{working ? "Ищем…" : "Найти"}</button>
+              </div>
+            </form>
+            {participant && (
+              <div className="participant-confirmation">
+                <p className="eyebrow">УЧАСТНИК НАЙДЕН</p>
+                <h2>{participant.first_name} {participant.last_name}</h2>
+                <p>Номер {participant.registration_number}</p>
+                {participant.already_scored ? (
+                  <div className="already-scored-message" role="status">
+                    {participant.score?.is_annulled
+                      ? "Результат аннулирован организатором. Повторное начисление на этой площадке запрещено."
+                      : <>Эта площадка уже пройдена. Ранее начислено <strong>{participant.score?.points ?? 0}</strong> баллов.</>}
+                  </div>
+                ) : (
+                  <>
+                    <div className="stepper" aria-label="Количество баллов">
+                      <button aria-label="Уменьшить баллы" disabled={working || points <= selectedStation.score_min} onClick={() => setPoints((value) => Math.max(selectedStation.score_min, value - selectedStation.score_step))}>−</button>
+                      <output aria-live="polite">{points}</output>
+                      <button aria-label="Увеличить баллы" disabled={working || points >= selectedStation.score_max} onClick={() => setPoints((value) => Math.min(selectedStation.score_max, value + selectedStation.score_step))}>+</button>
                     </div>
-                  ) : (
-                    <>
-                      <div className="stepper" aria-label="Количество баллов">
-                        <button aria-label="Уменьшить баллы" disabled={working || points <= selectedStation.score_min} onClick={() => setPoints((value) => Math.max(selectedStation.score_min, value - selectedStation.score_step))}>−</button>
-                        <output aria-live="polite">{points}</output>
-                        <button aria-label="Увеличить баллы" disabled={working || points >= selectedStation.score_max} onClick={() => setPoints((value) => Math.min(selectedStation.score_max, value + selectedStation.score_step))}>+</button>
-                      </div>
-                      <p className="stepper-hint">Шаг {selectedStation.score_step} · максимум {selectedStation.score_max}</p>
-                      <button className="primary-button submit-score-button" disabled={working || points < selectedStation.score_min || points > selectedStation.score_max} onClick={() => void handleSubmitScore()}>
-                        {working ? "Сохраняем…" : "Подтвердить баллы"}
-                      </button>
-                    </>
-                  )}
-                  {success && <p className="success-message" role="status">{success}</p>}
-                </div>
-              )}
-            </section>
-          )}
-          <p className="backend-gap-note">Доступ к площадке определяется коротким кодом, привязанным организатором. Повторное начисление и допустимая шкала проверяются сервером и базой данных.</p>
-        </>
-      )}
+                    <p className="stepper-hint">Шаг {selectedStation.score_step} · максимум {selectedStation.score_max}</p>
+                    <button className="primary-button submit-score-button" disabled={working || points < selectedStation.score_min || points > selectedStation.score_max} onClick={() => void handleSubmitScore()}>
+                      {working ? "Сохраняем…" : "Подтвердить баллы"}
+                    </button>
+                  </>
+                )}
+                {success && <p className="success-message" role="status">{success}</p>}
+              </div>
+            )}
+          </section>
+        )}
+        <p className="backend-gap-note">Доступ к площадке определяется коротким кодом, привязанным организатором. Повторное начисление и допустимая шкала проверяются сервером и базой данных.</p>
+      </>
     </AuthenticatedPage>
   );
 }

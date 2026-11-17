@@ -1,7 +1,5 @@
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,18 +24,11 @@ router = APIRouter(tags=["Scores"])
 class ParticipantLookup(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    qr_token: UUID | None = None
-    registration_number: str | None = Field(default=None, min_length=1, max_length=50)
-
-    @model_validator(mode="after")
-    def require_exactly_one_lookup_value(self):
-        if (self.qr_token is None) == (self.registration_number is None):
-            raise ValueError("Provide exactly one of qr_token or registration_number")
-        if self.registration_number is not None:
-            self.registration_number = self.registration_number.strip()
-            if not self.registration_number:
-                raise ValueError("Registration number must not be blank")
-        return self
+    registration_number: str = Field(
+        min_length=6,
+        max_length=6,
+        pattern=r"^[0-9]{6}$",
+    )
 
 
 class ScoreCreate(BaseModel):
@@ -133,17 +124,12 @@ def lookup_participant_record(
     if station is None:
         raise HTTPException(status_code=404, detail="Station not found")
 
-    lookup = (
-        EventParticipant.qr_token == payload.qr_token
-        if payload.qr_token is not None
-        else EventParticipant.registration_number == payload.registration_number
-    )
     row = session.execute(
         select(EventParticipant, Person)
         .join(Person, Person.id == EventParticipant.person_id)
         .where(
             EventParticipant.event_id == station.event_id,
-            lookup,
+            EventParticipant.registration_number == payload.registration_number,
         )
     ).first()
     if row is None:

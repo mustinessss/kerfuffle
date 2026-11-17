@@ -118,7 +118,6 @@ export interface RegisteredParticipant {
   first_name: string;
   last_name: string;
   registration_number: string;
-  qr_token: string;
   registered_at: string;
 }
 
@@ -333,11 +332,9 @@ export function getEvents(accessToken = "", signal?: AbortSignal) {
 }
 
 export function createEvent(
-  accessToken: string,
   payload: Pick<EventSummary, "name" | "event_date">,
 ) {
   return requestJson<EventSummary>("/events", {
-    accessToken,
     method: "POST",
     body: payload,
   });

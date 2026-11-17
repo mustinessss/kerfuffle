@@ -1,6 +1,4 @@
 from datetime import date, datetime
-from uuid import UUID
-
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -14,7 +12,6 @@ from sqlalchemy import (
     Integer,
     Text,
     UniqueConstraint,
-    Uuid,
     func,
     text,
 )
@@ -214,7 +211,6 @@ class EventParticipant(Base):
         ID_TYPE, ForeignKey("people.id", ondelete="RESTRICT"), nullable=False
     )
     registration_number: Mapped[str] = mapped_column(Text, nullable=False)
-    qr_token: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, unique=True)
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

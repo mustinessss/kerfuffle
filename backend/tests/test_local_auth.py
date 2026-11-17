@@ -68,6 +68,35 @@ def test_login_sets_http_only_session_and_csrf_cookies(auth_client):
     assert client.get("/api/v1/auth/me").json()["email"] == "admin@example.test"
 
 
+def test_system_admin_creates_event_with_cookie_session(auth_client):
+    client, _ = auth_client
+    assert login(client).status_code == 200
+
+    response = client.post(
+        "/api/v1/events",
+        json={"name": "Cookie-auth event", "event_date": "2026-11-18"},
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": client.cookies.get("kerfuffle_csrf"),
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "Cookie-auth event"
+
+
+def test_event_creation_requires_authentication(auth_client):
+    client, _ = auth_client
+
+    response = client.post(
+        "/api/v1/events",
+        json={"name": "Unauthenticated event", "event_date": "2026-11-18"},
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 401
+
+
 def test_login_returns_same_generic_error_for_unknown_email_and_bad_password(auth_client):
     client, _ = auth_client
 

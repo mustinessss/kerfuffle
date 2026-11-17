@@ -1,5 +1,4 @@
 from datetime import date
-from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -15,6 +14,7 @@ from app.api.v1.participants import (
     register_participant,
     search_people,
 )
+from app.api.v1.scores import ParticipantLookup
 from app.api.v1.stations import (
     StationCreate,
     StationUpdate,
@@ -188,7 +188,6 @@ def test_station_scale_validation_and_post_score_lock(db_session, event_team):
         event_id=event_record.id,
         person_id=person.id,
         registration_number="0001",
-        qr_token=UUID("c2374ab2-b22c-4c41-8de0-54c662f18503"),
     )
     db_session.add(registration)
     db_session.flush()
@@ -219,7 +218,7 @@ def test_station_scale_validation_and_post_score_lock(db_session, event_team):
     assert response["name"] == "Updated name"
 
 
-def test_registration_creates_person_sequential_number_and_random_qr(
+def test_registration_creates_person_and_sequential_six_digit_number(
     db_session, event_team
 ):
     event_record, _, registrar, _ = event_team
@@ -239,7 +238,7 @@ def test_registration_creates_person_sequential_number_and_random_qr(
     assert response["registration_number"] == "000001"
     assert response["first_name"] == "Alex"
     assert response["last_name"] == "Example"
-    UUID(response["qr_token"])
+    assert "qr_token" not in response
     assert "phone" not in response
 
 
@@ -268,7 +267,7 @@ def test_registration_reuses_person_and_rejects_duplicate(
 
     assert first["registration_number"] == "000001"
     assert second["registration_number"] == "000002"
-    assert first["qr_token"] != second["qr_token"]
+    assert "qr_token" not in first
 
     with pytest.raises(HTTPException) as error:
         register_participant(
@@ -279,6 +278,17 @@ def test_registration_reuses_person_and_rejects_duplicate(
         )
     assert error.value.status_code == 409
     assert db_session.query(EventParticipant).count() == 2
+
+
+def test_registration_lookup_requires_six_numeric_digits_and_rejects_qr_fields():
+    with pytest.raises(ValidationError):
+        ParticipantLookup(registration_number="123")
+
+    with pytest.raises(ValidationError):
+        ParticipantLookup(registration_number="12A456")
+
+    with pytest.raises(ValidationError):
+        ParticipantLookup(qr_token="a1111111-1111-4111-8111-111111111111")
 
 
 def test_registration_number_limit_is_six_digits():

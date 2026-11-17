@@ -1,7 +1,8 @@
 BEGIN;
 
--- Kerfuffle v0.1 — PostgreSQL schema
--- Seven core tables, integrity constraints, and database triggers.
+-- HISTORICAL REFERENCE ONLY: original Kerfuffle v0.1 schema.
+-- Do not use this file to initialize or upgrade an application database.
+-- The supported schema is the Alembic migration chain in backend/alembic.
 
 CREATE TABLE people (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
