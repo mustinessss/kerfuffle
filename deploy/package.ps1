@@ -56,8 +56,14 @@ try {
                 $hasExcludedDirectory = @(
                     $segments | Where-Object { $excludedDirectories -contains $_ }
                 ).Count -gt 0
-                $isEnvironmentFile = $_.Name -eq ".env" -or (
-                    $_.Name.StartsWith(".env.") -and $_.Name -ne ".env.example"
+                $isEnvironmentFile = (
+                    $_.Name -eq ".env" -or
+                    $_.Name -eq ".env.production" -or
+                    (
+                        $_.Name.StartsWith(".env.") -and
+                        $_.Name -ne ".env.example" -and
+                        $_.Name -ne ".env.production.example"
+                    )
                 )
                 $isCacheFile = $_.Extension -in @(".pyc", ".pyo", ".log", ".sqlite", ".db") -or
                     $_.Name.EndsWith(".tsbuildinfo")

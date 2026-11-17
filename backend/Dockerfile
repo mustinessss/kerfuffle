@@ -18,4 +18,4 @@ RUN groupadd --system app && useradd --system --gid app app \
 USER app
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1,::1,172.28.0.2"]

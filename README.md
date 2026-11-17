@@ -52,3 +52,10 @@ PostgreSQL с TLS и отдельной runtime-ролью, резервные �
 восстановлением, мониторинг, edge rate limiting и acceptance-тесты на staging.
 Подробный checklist находится в
 [backend/README.md](./backend/README.md).
+
+Для развёртывания на Linux VPS используйте отдельный production Compose-файл
+и Linux-инструкции в [deploy/compose.production.yaml](./deploy/compose.production.yaml)
+и [deploy/README.md](./deploy/README.md). Скопируйте
+[deploy/.env.production.example](./deploy/.env.production.example) в
+`deploy/.env.production`, создайте PostgreSQL TLS-файлы и храните production
+секреты вне системы контроля версий.
