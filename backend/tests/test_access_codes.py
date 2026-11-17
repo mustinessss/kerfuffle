@@ -14,6 +14,7 @@ from app.api.v1.access_codes import (
     create_access_code,
     get_access_session,
     list_access_codes,
+    list_route_sheets_with_access_code,
     register_with_access_code,
     revoke_access_code,
     submit_score_with_access_code,
@@ -29,6 +30,8 @@ from app.db.models import (
     EventAccess,
     EventParticipant,
     Person,
+    RouteSheet,
+    RouteSheetStation,
     Score,
     Station,
     User,
@@ -177,6 +180,35 @@ def test_registration_code_registers_in_its_event(
 
     assert result["event_id"] == access_setup["event"].id
     assert result["registration_number"] == "000001"
+
+
+def test_registration_code_lists_route_sheets_for_selection(db_session, access_setup):
+    sheet = RouteSheet(
+        event_id=access_setup["event"].id,
+        name="North route",
+        capacity=3,
+    )
+    db_session.add(sheet)
+    db_session.flush()
+    db_session.add(
+        RouteSheetStation(
+            route_sheet_id=sheet.id,
+            event_id=sheet.event_id,
+            station_id=access_setup["station"].id,
+        )
+    )
+    db_session.commit()
+    code = issue_code(db_session, access_setup)
+    grant = verify(db_session, code["code"])
+
+    route_sheets = list_route_sheets_with_access_code(
+        session_for(db_session, grant["access_token"]),
+        db_session,
+    )
+
+    assert route_sheets[0]["name"] == "North route"
+    assert route_sheets[0]["capacity"] == 3
+    assert route_sheets[0]["registered_count"] == 0
 
 
 def test_access_code_is_case_insensitive_and_cannot_be_reused(

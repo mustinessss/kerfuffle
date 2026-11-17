@@ -9,6 +9,7 @@ from app.api.v1.me import router as me_router
 from app.api.v1.organizer_admin import router as organizer_admin_router
 from app.api.v1.organizer_admin import public_router as public_account_router
 from app.api.v1.participants import router as participants_router
+from app.api.v1.route_sheets import router as route_sheets_router
 from app.api.v1.scores import router as scores_router
 from app.api.v1.stations import router as stations_router
 from app.core.config import get_settings
@@ -33,6 +34,7 @@ app.include_router(public_account_router, prefix=settings.api_v1_prefix)
 app.include_router(events_router, prefix=settings.api_v1_prefix)
 app.include_router(stations_router, prefix=settings.api_v1_prefix)
 app.include_router(participants_router, prefix=settings.api_v1_prefix)
+app.include_router(route_sheets_router, prefix=settings.api_v1_prefix)
 app.include_router(scores_router, prefix=settings.api_v1_prefix)
 app.include_router(leaderboard_router, prefix=settings.api_v1_prefix)
 

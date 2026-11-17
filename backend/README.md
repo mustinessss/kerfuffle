@@ -124,6 +124,9 @@ Important endpoints:
   `/api/v1/system-admin/invitations`
 - Events: `/api/v1/events`
 - Stations: `/api/v1/events/{event_id}/stations`
+- Route sheets: `/api/v1/events/{event_id}/route-sheets`,
+  `/api/v1/route-sheets/{route_sheet_id}`; registrar codes list available sheets
+  at `/api/v1/public/access/route-sheets`
 - People search: `/api/v1/people?event_id={event_id}&query={name}`
 - Participants: `/api/v1/events/{event_id}/participants`
 - Participant lookup: `POST /api/v1/stations/{station_id}/participants/lookup`
@@ -140,8 +143,17 @@ Registration numbers are sequential six-digit numbers within an event and are
 allocated while locking the event row. Participant lookup uses only that
 number; QR lookup and QR generation are not part of the active application.
 Migration `0007_nullable_legacy_qr_token` preserves existing database values
-but permits new registrations without them. The legacy column can be removed
-only in a later, separately planned migration after the compatibility window.
+but permits new registrations without them. Migration `0008_route_sheets`
+adds named sets of stations and optional per-sheet capacity. A registrar selects
+a sheet when registering if the event has any; scoring is allowed only at
+stations in that participant's sheet. Events without sheets retain unrestricted
+registration and scoring. Registration transactions lock the event row before
+checking both sequential numbers and route capacity, so concurrent registrations
+cannot overbook a sheet. The sheet's station set is immutable after the first
+participant is assigned. These migrations are not applied automatically outside
+the documented deployment process; back up existing databases before upgrading.
+The legacy QR column can be removed only in a later, separately planned
+migration after the compatibility window.
 Organizers and registrars can search and list participants. Station operators
 only see their assigned stations and receive no optional personal data. Scores
 are limited to the assigned station and its configured scale. Public
@@ -167,3 +179,8 @@ The Vite server proxies `/api` to `http://127.0.0.1:8001`.
 ```powershell
 python -m pytest
 ```
+
+The route-capacity concurrency test is skipped unless
+`KERFUFFLE_TEST_POSTGRES_URL` is set to a disposable PostgreSQL test database.
+It creates and drops a uniquely named schema; never point it at production or
+the local application database.

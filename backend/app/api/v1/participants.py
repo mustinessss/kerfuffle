@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
 from app.core.permissions import require_event_access
-from app.db.models import Event, EventParticipant, Person, User
+from app.db.models import Event, EventParticipant, Person, RouteSheet, User
 from app.db.session import get_db
 
 
@@ -47,6 +47,7 @@ class ParticipantCreate(BaseModel):
 
     person_id: int | None = Field(default=None, gt=0)
     person: PersonCreate | None = None
+    route_sheet_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def require_exactly_one_person_source(self):
@@ -66,6 +67,7 @@ def person_response(person: Person) -> dict[str, int | str]:
 def participant_response(
     registration: EventParticipant,
     person: Person,
+    route_sheet_name: str | None = None,
 ) -> dict[str, int | str | datetime | None]:
     return {
         "id": registration.id,
@@ -74,6 +76,8 @@ def participant_response(
         "first_name": person.first_name,
         "last_name": person.last_name,
         "registration_number": registration.registration_number,
+        "route_sheet_id": registration.route_sheet_id,
+        "route_sheet_name": route_sheet_name,
         "registered_at": registration.registered_at,
     }
 
@@ -99,6 +103,43 @@ def register_participant_record(
     event = session.scalar(select(Event).where(Event.id == event_id).with_for_update())
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    route_sheet_count = session.scalar(
+        select(func.count())
+        .select_from(RouteSheet)
+        .where(RouteSheet.event_id == event_id)
+    )
+    route_sheet = None
+    if payload.route_sheet_id is None:
+        if route_sheet_count:
+            session.rollback()
+            raise HTTPException(
+                status_code=422,
+                detail="A route sheet must be selected for this event",
+            )
+    else:
+        route_sheet = session.scalar(
+            select(RouteSheet)
+            .where(
+                RouteSheet.id == payload.route_sheet_id,
+                RouteSheet.event_id == event_id,
+            )
+            .with_for_update()
+        )
+        if route_sheet is None:
+            session.rollback()
+            raise HTTPException(status_code=404, detail="Route sheet not found")
+        assigned_count = session.scalar(
+            select(func.count())
+            .select_from(EventParticipant)
+            .where(EventParticipant.route_sheet_id == route_sheet.id)
+        )
+        if route_sheet.capacity is not None and assigned_count >= route_sheet.capacity:
+            session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="The route sheet has reached its participant capacity",
+            )
 
     if payload.person_id is not None:
         person = session.get(Person, payload.person_id)
@@ -136,6 +177,7 @@ def register_participant_record(
         event_id=event_id,
         person_id=person.id,
         registration_number=_next_registration_number(registration_count),
+        route_sheet_id=route_sheet.id if route_sheet else None,
     )
     session.add(registration)
     try:
@@ -150,7 +192,11 @@ def register_participant_record(
         raise
 
     session.refresh(registration)
-    return participant_response(registration, person)
+    return participant_response(
+        registration,
+        person,
+        route_sheet.name if route_sheet else None,
+    )
 
 
 @router.get("/people", summary="Найти карточки людей в мероприятии")
@@ -199,16 +245,21 @@ def list_participants(
         raise HTTPException(status_code=404, detail="Event not found")
     require_event_access(session, user, event_id, {"organizer", "registrar"})
     rows = session.execute(
-        select(EventParticipant, Person)
+        select(EventParticipant, Person, RouteSheet.name)
         .join(Person, Person.id == EventParticipant.person_id)
+        .outerjoin(
+            RouteSheet,
+            (RouteSheet.id == EventParticipant.route_sheet_id)
+            & (RouteSheet.event_id == EventParticipant.event_id),
+        )
         .where(EventParticipant.event_id == event_id)
         .order_by(EventParticipant.registered_at, EventParticipant.id)
         .limit(limit)
         .offset(offset)
     )
     return [
-        participant_response(registration, person)
-        for registration, person in rows
+        participant_response(registration, person, route_sheet_name)
+        for registration, person, route_sheet_name in rows
     ]
 
 

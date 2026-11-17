@@ -12,6 +12,8 @@ def test_all_design_document_tables_have_models():
         "events",
         "users",
         "stations",
+        "route_sheets",
+        "route_sheet_stations",
         "event_participants",
         "event_access",
         "scores",

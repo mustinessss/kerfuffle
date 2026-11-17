@@ -10,6 +10,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     Text,
     UniqueConstraint,
     func,
@@ -189,6 +190,50 @@ class Station(Base):
     score_step: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class RouteSheet(Base):
+    __tablename__ = "route_sheets"
+    __table_args__ = (
+        UniqueConstraint("id", "event_id", name="route_sheets_id_event_unique"),
+        UniqueConstraint("event_id", "name", name="route_sheets_name_per_event_unique"),
+        CheckConstraint("btrim(name) <> ''", name="route_sheets_name_not_empty"),
+        CheckConstraint(
+            "capacity IS NULL OR capacity > 0",
+            name="route_sheets_capacity_positive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("events.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    capacity: Mapped[int | None] = mapped_column(Integer)
+
+
+class RouteSheetStation(Base):
+    __tablename__ = "route_sheet_stations"
+    __table_args__ = (
+        PrimaryKeyConstraint("route_sheet_id", "station_id"),
+        ForeignKeyConstraint(
+            ["route_sheet_id", "event_id"],
+            ["route_sheets.id", "route_sheets.event_id"],
+            name="route_sheet_stations_sheet_event_fk",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["station_id", "event_id"],
+            ["stations.id", "stations.event_id"],
+            name="route_sheet_stations_station_event_fk",
+            ondelete="RESTRICT",
+        ),
+        Index("route_sheet_stations_event_station_idx", "event_id", "station_id"),
+    )
+
+    route_sheet_id: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+    event_id: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+    station_id: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+
+
 class EventParticipant(Base):
     __tablename__ = "event_participants"
     __table_args__ = (
@@ -200,7 +245,14 @@ class EventParticipant(Base):
             "btrim(registration_number) <> ''",
             name="event_participants_registration_number_not_empty",
         ),
+        ForeignKeyConstraint(
+            ["route_sheet_id", "event_id"],
+            ["route_sheets.id", "route_sheets.event_id"],
+            name="event_participants_route_sheet_event_fk",
+            ondelete="RESTRICT",
+        ),
         Index("event_participants_event_idx", "event_id", "registered_at"),
+        Index("event_participants_route_sheet_idx", "route_sheet_id"),
     )
 
     id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
@@ -211,6 +263,7 @@ class EventParticipant(Base):
         ID_TYPE, ForeignKey("people.id", ondelete="RESTRICT"), nullable=False
     )
     registration_number: Mapped[str] = mapped_column(Text, nullable=False)
+    route_sheet_id: Mapped[int | None] = mapped_column(ID_TYPE)
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

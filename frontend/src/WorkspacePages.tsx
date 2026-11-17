@@ -6,12 +6,15 @@ import {
   createAccessCode,
   createEvent,
   createStation,
+  createRouteSheet,
   correctScore,
   annulScore,
   getCurrentAccount,
   getAccessCodes,
   getEvents,
   getParticipants,
+  getRouteSheets,
+  getRouteSheetsWithAccessCode,
   getEventScores,
   inviteOrganizer,
   getStations,
@@ -19,6 +22,7 @@ import {
   lookupWithAccessCode,
   registerParticipant,
   registerWithAccessCode,
+  deleteRouteSheet,
   revokeAccessCode,
   submitScore,
   submitScoreWithAccessCode,
@@ -31,6 +35,7 @@ import type {
   EventSummary,
   ParticipantLookup,
   RegisteredParticipant,
+  RouteSheetSummary,
   ScoreHistoryEntry,
   StationSummary,
   VerifiedAccess,
@@ -137,6 +142,7 @@ export function OrganizerPage() {
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [stations, setStations] = useState<StationSummary[]>([]);
+  const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
   const [participants, setParticipants] = useState<RegisteredParticipant[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailsEventId, setDetailsEventId] = useState<number | null>(null);
@@ -150,6 +156,7 @@ export function OrganizerPage() {
   const canRegister = canManage || selectedAccess.some((access) => access.role === "registrar");
   const detailLoading = selectedEventId !== null && detailsEventId !== selectedEventId;
   const visibleStations = detailsEventId === selectedEventId ? stations : [];
+  const visibleRouteSheets = detailsEventId === selectedEventId ? routeSheets : [];
   const visibleParticipants = detailsEventId === selectedEventId ? participants : EMPTY_PARTICIPANTS;
   const filteredParticipants = useMemo(() => {
     const query = participantQuery.trim().toLowerCase();
@@ -197,19 +204,27 @@ export function OrganizerPage() {
     const participantRequest = canRegister
       ? getParticipants(selectedEventId, token, controller.signal)
       : Promise.resolve([]);
+    const routeSheetRequest = canRegister
+      ? getRouteSheets(selectedEventId, token, controller.signal)
+      : Promise.resolve([]);
     Promise.all([
       getStations(selectedEventId, token, controller.signal),
       participantRequest,
+      routeSheetRequest,
     ])
-      .then(([nextStations, nextParticipants]) => {
+      .then(([nextStations, nextParticipants, nextRouteSheets]) => {
         if (!active) return;
         setStations(nextStations);
         setParticipants(nextParticipants);
+        setRouteSheets(nextRouteSheets);
         setDetailsEventId(selectedEventId);
         setError("");
       })
       .catch((requestError: unknown) => {
         if (active && !controller.signal.aborted) {
+          setStations([]);
+          setParticipants([]);
+          setRouteSheets([]);
           setDetailsEventId(selectedEventId);
           setError(messageFor(requestError));
         }
@@ -307,6 +322,7 @@ export function OrganizerPage() {
                   ))}
                 </div>
                 {canManage && <CreateStationForm eventId={selectedEvent.id} accessToken={token} onCreated={() => setRefreshKey((key) => key + 1)} onError={setError} />}
+                {canManage && <RouteSheetsPanel eventId={selectedEvent.id} accessToken={token} stations={visibleStations} routeSheets={visibleRouteSheets} onChanged={() => setRefreshKey((key) => key + 1)} />}
                 {canManage && <AccessCodesPanel eventId={selectedEvent.id} accessToken={token} stations={visibleStations} />}
               </section>
               {canRegister && (
@@ -315,7 +331,7 @@ export function OrganizerPage() {
                     <div><p className="eyebrow">УЧЁТ УЧАСТИЯ</p><h2>Участники</h2></div>
                     <span className="muted-status">{visibleParticipants.length} в списке</span>
                   </div>
-                  <RegisterParticipantForm eventId={selectedEvent.id} accessToken={token} onRegistered={() => setRefreshKey((key) => key + 1)} onError={setError} />
+                  <RegisterParticipantForm eventId={selectedEvent.id} accessToken={token} routeSheets={visibleRouteSheets} onRegistered={() => setRefreshKey((key) => key + 1)} onError={setError} />
                   <label className="participant-search">
                     <span className="visually-hidden">Поиск участника</span>
                     <input value={participantQuery} onChange={(event) => setParticipantQuery(event.target.value)} placeholder="Найти по имени или номеру" />
@@ -325,6 +341,7 @@ export function OrganizerPage() {
                       <div className="participant-admin-row" key={participant.id}>
                         <strong>{participant.first_name} {participant.last_name}</strong>
                         <span>№ {participant.registration_number}</span>
+                        {participant.route_sheet_name && <span>{participant.route_sheet_name}</span>}
                       </div>
                     ))}
                     {filteredParticipants.length === 0 && !detailLoading && <p className="empty-workspace">{visibleParticipants.length ? "Совпадений нет." : "Участников пока нет."}</p>}
@@ -773,16 +790,21 @@ function CreateStationForm({
 function RegisterParticipantForm({
   eventId,
   accessToken,
+  routeSheets,
   onRegistered,
   onError,
 }: {
   eventId: number;
   accessToken: string;
+  routeSheets: RouteSheetSummary[];
   onRegistered: () => void;
   onError: (message: string) => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [registeredNumber, setRegisteredNumber] = useState("");
+  const hasAvailableRouteSheet = routeSheets.length === 0 || routeSheets.some(
+    (sheet) => sheet.capacity === null || sheet.registered_count < sheet.capacity,
+  );
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -794,7 +816,7 @@ function RegisterParticipantForm({
       const participant = await registerParticipant(eventId, accessToken, {
         first_name: String(form.get("firstName") ?? "").trim(),
         last_name: String(form.get("lastName") ?? "").trim(),
-      });
+      }, Number(form.get("routeSheetId")) || null);
       setRegisteredNumber(participant.registration_number);
       formElement.reset();
       onRegistered();
@@ -809,17 +831,132 @@ function RegisterParticipantForm({
       <form className="workspace-form registration-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>Имя<input name="firstName" required maxLength={100} /></label>
         <label>Фамилия<input name="lastName" required maxLength={100} /></label>
-        <button className="primary-button" disabled={saving}>{saving ? "Регистрируем…" : "Зарегистрировать"}</button>
+        {routeSheets.length > 0 && (
+          <label>Маршрутный лист
+            <select name="routeSheetId" required defaultValue="">
+              <option value="" disabled>Выберите маршрут</option>
+              {routeSheets.map((sheet) => (
+                <option
+                  key={sheet.id}
+                  value={sheet.id}
+                  disabled={sheet.capacity !== null && sheet.registered_count >= sheet.capacity}
+                >
+                  {sheet.name} · {sheet.stations.map((station) => station.name).join(", ")}
+                  {sheet.capacity === null ? "" : ` (${sheet.registered_count}/${sheet.capacity})`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button className="primary-button" disabled={saving || !hasAvailableRouteSheet}>{saving ? "Регистрируем…" : "Зарегистрировать"}</button>
       </form>
+      {!hasAvailableRouteSheet && <p className="backend-gap-note">Свободных мест на маршрутных листах нет.</p>}
       {registeredNumber && <p className="success-message" role="status">Участник зарегистрирован. Номер: <strong>{registeredNumber}</strong></p>}
     </>
+  );
+}
+
+function RouteSheetsPanel({
+  eventId,
+  accessToken,
+  stations,
+  routeSheets,
+  onChanged,
+}: {
+  eventId: number;
+  accessToken: string;
+  stations: StationSummary[];
+  routeSheets: RouteSheetSummary[];
+  onChanged: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const stationIds = form.getAll("stationIds").map(Number);
+    setSaving(true);
+    setError("");
+    try {
+      await createRouteSheet(eventId, accessToken, {
+        name: String(form.get("routeName") ?? "").trim(),
+        capacity: String(form.get("capacity") ?? "").trim()
+          ? Number(form.get("capacity"))
+          : null,
+        station_ids: stationIds,
+      });
+      formElement.reset();
+      onChanged();
+    } catch (requestError) {
+      setError(messageFor(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(routeSheetId: number) {
+    setSaving(true);
+    setError("");
+    try {
+      await deleteRouteSheet(routeSheetId, accessToken);
+      onChanged();
+    } catch (requestError) {
+      setError(messageFor(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="workspace-card route-sheets-panel">
+      <h3>Маршрутные листы</h3>
+      <p className="backend-gap-note">Выберите набор площадок и при необходимости ограничьте число участников.</p>
+      {routeSheets.map((sheet) => (
+        <div className="route-sheet-row" key={sheet.id}>
+          <strong>{sheet.name}</strong>
+          <span>
+            {sheet.stations.map((station) => station.name).join(", ")}
+          </span>
+          <span>
+            {sheet.capacity === null
+              ? `${sheet.registered_count} участников · без лимита`
+              : `${sheet.registered_count}/${sheet.capacity} участников`}
+          </span>
+          <button
+            className="quiet-button"
+            disabled={saving || sheet.registered_count > 0}
+            onClick={() => void handleDelete(sheet.id)}
+            title={sheet.registered_count > 0 ? "Нельзя удалить назначенный участникам маршрут" : undefined}
+          >
+            Удалить
+          </button>
+        </div>
+      ))}
+      <form className="workspace-form route-sheet-create-form" onSubmit={(event) => void handleCreate(event)}>
+        <label>Название маршрутного листа<input name="routeName" required maxLength={100} /></label>
+        <label>Вместимость (необязательно)<input name="capacity" type="number" min="1" step="1" /></label>
+        <label>Площадки
+          <select name="stationIds" multiple required size={Math.min(Math.max(stations.length, 2), 5)}>
+            {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
+          </select>
+        </label>
+        <button className="primary-button" disabled={saving || stations.length === 0}>
+          {saving ? "Сохраняем…" : "Создать маршрутный лист"}
+        </button>
+      </form>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
   );
 }
 
 export function RegistrationPage() {
   const [code, setCode] = useState("");
   const [access, setAccess] = useState<VerifiedAccess | null>(null);
+  const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
   const [registeredNumber, setRegisteredNumber] = useState("");
+  const [registeredRouteSheet, setRegisteredRouteSheet] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
 
@@ -833,6 +970,10 @@ export function RegistrationPage() {
         setError("Этот код не предназначен для регистрации участников.");
         return;
       }
+      const availableRouteSheets = await getRouteSheetsWithAccessCode(
+        verified.access_token,
+      );
+      setRouteSheets(availableRouteSheets);
       setAccess(verified);
       setCode("");
     } catch (requestError) {
@@ -847,14 +988,23 @@ export function RegistrationPage() {
     if (!access) return;
     const formElement = event.currentTarget;
     const formData = new FormData(formElement);
+    const selectedRouteSheetId = Number(formData.get("routeSheetId")) || null;
     setWorking(true);
     setError("");
     try {
       const participant = await registerWithAccessCode(access.access_token, {
         first_name: String(formData.get("firstName") ?? "").trim(),
         last_name: String(formData.get("lastName") ?? "").trim(),
-      });
+      }, selectedRouteSheetId);
       setRegisteredNumber(participant.registration_number);
+      setRegisteredRouteSheet(participant.route_sheet_name ?? "");
+      if (selectedRouteSheetId !== null) {
+        setRouteSheets((current) => current.map((sheet) => (
+          sheet.id === selectedRouteSheetId
+            ? { ...sheet, registered_count: sheet.registered_count + 1 }
+            : sheet
+        )));
+      }
       formElement.reset();
     } catch (requestError) {
       setError(messageFor(requestError));
@@ -877,20 +1027,44 @@ export function RegistrationPage() {
           <div className="workspace-card access-context">
             <p className="eyebrow">ДОСТУП ПОДТВЕРЖДЁН</p>
             <p>Регистрация участника мероприятия № {access.event_id}</p>
-            <button className="quiet-button" onClick={() => { setAccess(null); setRegisteredNumber(""); }}>Ввести другой код</button>
+            <button className="quiet-button" onClick={() => { setAccess(null); setRouteSheets([]); setRegisteredNumber(""); setRegisteredRouteSheet(""); }}>Ввести другой код</button>
           </div>
           {!registeredNumber ? (
             <form className="workspace-card workspace-form registration-form access-registration-form" onSubmit={(event) => void handleRegister(event)}>
               <label>Имя<input name="firstName" required maxLength={100} /></label>
               <label>Фамилия<input name="lastName" required maxLength={100} /></label>
-              <button className="primary-button" disabled={working}>{working ? "Регистрируем…" : "Зарегистрировать"}</button>
+              {routeSheets.length > 0 && !routeSheets.some(
+                (sheet) => sheet.capacity === null || sheet.registered_count < sheet.capacity,
+              ) && <p className="backend-gap-note">Свободных мест на маршрутных листах нет.</p>}
+              {routeSheets.length > 0 && (
+                <label>Маршрутный лист
+                  <select name="routeSheetId" required defaultValue="">
+                    <option value="" disabled>Выберите маршрут</option>
+                    {routeSheets.map((sheet) => (
+                      <option
+                        key={sheet.id}
+                        value={sheet.id}
+                        disabled={sheet.capacity !== null && sheet.registered_count >= sheet.capacity}
+                      >
+                        {sheet.name}{sheet.capacity === null ? "" : ` (${sheet.registered_count}/${sheet.capacity})`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button className="primary-button" disabled={working || (
+                routeSheets.length > 0 && !routeSheets.some(
+                  (sheet) => sheet.capacity === null || sheet.registered_count < sheet.capacity,
+                )
+              )}>{working ? "Регистрируем…" : "Зарегистрировать"}</button>
             </form>
           ) : (
             <div className="workspace-card registration-result" role="status">
               <span>Ваш номер участника</span>
               <strong>{registeredNumber}</strong>
+              {registeredRouteSheet && <p>Маршрутный лист: {registeredRouteSheet}</p>}
               <p>Сохраните номер — он понадобится для начисления баллов.</p>
-              <button className="primary-button" onClick={() => setRegisteredNumber("")}>Зарегистрировать следующего участника</button>
+              <button className="primary-button" onClick={() => { setRegisteredNumber(""); setRegisteredRouteSheet(""); }}>Зарегистрировать следующего участника</button>
             </div>
           )}
         </>

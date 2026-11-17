@@ -60,6 +60,15 @@ export interface StationSummary {
   score_step: number;
 }
 
+export interface RouteSheetSummary {
+  id: number;
+  event_id: number;
+  name: string;
+  capacity: number | null;
+  registered_count: number;
+  stations: Array<{ id: number; name: string }>;
+}
+
 export interface AccessCodeSummary {
   id: number;
   event_id: number;
@@ -118,6 +127,8 @@ export interface RegisteredParticipant {
   first_name: string;
   last_name: string;
   registration_number: string;
+  route_sheet_id: number | null;
+  route_sheet_name: string | null;
   registered_at: string;
 }
 
@@ -399,11 +410,12 @@ export function verifyAccessCode(code: string) {
 export function registerWithAccessCode(
   accessToken: string,
   person: { first_name: string; last_name: string },
+  routeSheetId: number | null,
 ) {
   return requestJson<RegisteredParticipant>("/public/access/register", {
     accessToken,
     method: "POST",
-    body: { person },
+    body: { person, route_sheet_id: routeSheetId },
   });
 }
 
@@ -439,6 +451,42 @@ export function updateStation(
   });
 }
 
+export function getRouteSheets(
+  eventId: number,
+  accessToken: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RouteSheetSummary[]>(`/events/${eventId}/route-sheets`, {
+    accessToken,
+    signal,
+  });
+}
+
+export function createRouteSheet(
+  eventId: number,
+  accessToken: string,
+  payload: { name: string; capacity: number | null; station_ids: number[] },
+) {
+  return requestJson<RouteSheetSummary>(`/events/${eventId}/route-sheets`, {
+    accessToken,
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteRouteSheet(routeSheetId: number, accessToken: string) {
+  return requestJson<{ ok: boolean }>(`/route-sheets/${routeSheetId}`, {
+    accessToken,
+    method: "DELETE",
+  });
+}
+
+export function getRouteSheetsWithAccessCode(accessToken: string) {
+  return requestJson<RouteSheetSummary[]>("/public/access/route-sheets", {
+    accessToken,
+  });
+}
+
 export async function getParticipants(
   eventId: number,
   accessToken: string,
@@ -460,11 +508,12 @@ export function registerParticipant(
   eventId: number,
   accessToken: string,
   person: { first_name: string; last_name: string },
+  routeSheetId: number | null,
 ) {
   return requestJson<RegisteredParticipant>(`/events/${eventId}/participants`, {
     accessToken,
     method: "POST",
-    body: { person },
+    body: { person, route_sheet_id: routeSheetId },
   });
 }
 

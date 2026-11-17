@@ -10,6 +10,7 @@ from app.db.models import (
     Event,
     EventParticipant,
     Person,
+    RouteSheetStation,
     Score,
     ScoreAudit,
     Station,
@@ -135,6 +136,14 @@ def lookup_participant_record(
     if row is None:
         raise HTTPException(status_code=404, detail="Participant not found")
     registration, person = row
+    if registration.route_sheet_id is not None and session.scalar(
+        select(RouteSheetStation.station_id).where(
+            RouteSheetStation.route_sheet_id == registration.route_sheet_id,
+            RouteSheetStation.station_id == station.id,
+        )
+    ) is None:
+        raise HTTPException(status_code=404, detail="Participant not found at this station")
+
     score = session.scalar(
         select(Score).where(
             Score.event_participant_id == registration.id,
@@ -162,6 +171,16 @@ def create_score_record(
     registration = session.get(EventParticipant, payload.event_participant_id)
     if registration is None or registration.event_id != station.event_id:
         raise HTTPException(status_code=404, detail="Participant not found")
+    if registration.route_sheet_id is not None and session.scalar(
+        select(RouteSheetStation.station_id).where(
+            RouteSheetStation.route_sheet_id == registration.route_sheet_id,
+            RouteSheetStation.station_id == station.id,
+        )
+    ) is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Participant is not assigned to this station",
+        )
     _validate_points(payload.points, station)
 
     score = Score(
@@ -182,7 +201,7 @@ def create_score_record(
         if _postgres_error_code(error) == "23514":
             raise HTTPException(
                 status_code=422,
-                detail="Participant, station or points do not match",
+                detail="Participant, route sheet, station or points do not match",
             ) from error
         raise
     session.refresh(score)

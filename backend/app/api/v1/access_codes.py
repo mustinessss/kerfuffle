@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.participants import ParticipantCreate, register_participant_record
+from app.api.v1.route_sheets import list_route_sheets_for_event
 from app.api.v1.scores import (
     ParticipantLookup,
     ScoreCreate,
@@ -325,6 +326,20 @@ def verify_access_code(
             else None
         ),
     }
+
+
+@router.get(
+    "/public/access/route-sheets",
+    summary="Список маршрутных листов для регистратора",
+)
+def list_route_sheets_with_access_code(
+    access: tuple[AccessSession, AccessCode] = Depends(get_access_session),
+    session: Session = Depends(get_db),
+):
+    _, code = access
+    if code.role != "registrar":
+        raise HTTPException(status_code=403, detail="Registration access required")
+    return list_route_sheets_for_event(code.event_id, session)
 
 
 @router.post(
