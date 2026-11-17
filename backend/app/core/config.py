@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     smtp_from: str | None = None
     smtp_use_tls: bool = True
     manual_auth_links_enabled: bool = False
+    # Set only on the one-shot Alembic migration service, which connects as DB owner.
+    database_migration_mode: bool = False
 
     @model_validator(mode="after")
     def require_production_configuration(self):
@@ -70,7 +72,12 @@ class Settings(BaseSettings):
             )
 
         database_url = make_url(self.database_url)
-        if database_url.username in (None, "postgres") or not database_url.password:
+        migration_owner_connection = (
+            self.database_migration_mode and database_url.username == "postgres"
+        )
+        if (
+            database_url.username in (None, "postgres") and not migration_owner_connection
+        ) or not database_url.password:
             missing.append("DATABASE_URL must use a dedicated non-default database role")
         if database_url.host in (None, "localhost", "127.0.0.1", "::1"):
             missing.append("DATABASE_URL must point to a non-local production database")
