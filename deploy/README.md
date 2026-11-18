@@ -1,5 +1,7 @@
 # Local Windows package
 
+Для публичного Linux VPS используйте отдельную полную инструкцию: [INSTALL-LINUX.md](./INSTALL-LINUX.md). Раздел ниже про Linux содержит краткую справочную версию; production запускается только через `compose.production.yaml`.
+
 This Docker Compose setup is for a local demo or acceptance test on one
 computer. It runs the frontend, API, and PostgreSQL over HTTP; **do not expose
 it to the internet or use it as a production deployment**.
