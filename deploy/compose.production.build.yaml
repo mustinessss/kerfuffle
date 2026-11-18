@@ -1,0 +1,31 @@
+# Optional override for building application images directly on the Linux VPS.
+# Use together with compose.production.yaml:
+#   docker compose --env-file deploy/.env.production \
+#     -f deploy/compose.production.yaml \
+#     -f deploy/compose.production.build.yaml up --build -d
+#
+# This keeps the normal production Compose file configured for GHCR images.
+
+services:
+  migrate:
+    image: kerfuffle-backend:local
+    pull_policy: build
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+
+  backend:
+    image: kerfuffle-backend:local
+    pull_policy: build
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+
+  frontend:
+    image: kerfuffle-frontend:local
+    pull_policy: build
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
