@@ -48,9 +48,8 @@ services:
         max-file: "5"
 
   migrate:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
+    image: ghcr.io/mustinessss/kerfuffle-backend:${KERFUFFLE_IMAGE_TAG:-latest}
+    pull_policy: always
     command: ["python", "-m", "alembic", "upgrade", "head"]
     environment:
       ENVIRONMENT: production
@@ -76,9 +75,8 @@ services:
     restart: "no"
 
   backend:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
+    image: ghcr.io/mustinessss/kerfuffle-backend:${KERFUFFLE_IMAGE_TAG:-latest}
+    pull_policy: always
     environment:
       ENVIRONMENT: production
       DATABASE_URL: postgresql+psycopg://kerfuffle_app:${APP_DB_PASSWORD}@db:5432/kerfuffle?sslmode=verify-full&sslrootcert=/opt/kerfuffle/tls/ca.crt
@@ -117,11 +115,8 @@ services:
         max-file: "5"
 
   frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_BASE_URL: /api/v1
+    image: ghcr.io/mustinessss/kerfuffle-frontend:${KERFUFFLE_IMAGE_TAG:-latest}
+    pull_policy: always
     depends_on:
       backend:
         condition: service_healthy
