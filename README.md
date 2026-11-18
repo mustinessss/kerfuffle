@@ -9,7 +9,8 @@
 - `frontend/` — React/Vite/TypeScript: публичный рейтинг и рабочие кабинеты.
 - `database/` — исторический SQL-снимок и SQL для ограниченной runtime-роли
   PostgreSQL. Актуальная структура БД управляется только миграциями Alembic.
-- `deploy/` — локальный Docker Compose-пакет для переноса на Windows-машину.
+- `deploy/` — локальный Docker Compose-пакет для переноса на Windows-машину
+  и production-конфигурация для Linux VPS.
 - `PROJECT_STATUS.md` — актуальное состояние и оставшиеся задачи.
 
 ## Локальный запуск приложения
@@ -44,18 +45,12 @@ email из `/admin/users`. Короткие коды регистратора и
 не для публикации в интернете. Не передавайте `deploy/.env` и не включайте его
 в архив.
 
-## Production minimum
+## Production deployment
 
-Перед публичным запуском нужны HTTPS reverse proxy, безопасное хранение
-секретов, SMTP или явно включённая ручная передача одноразовых ссылок,
-PostgreSQL с TLS и отдельной runtime-ролью, резервные копии с проверенным
-восстановлением, мониторинг, edge rate limiting и acceptance-тесты на staging.
-Подробный checklist находится в
-[backend/README.md](./backend/README.md).
+Для публичного Linux VPS используйте отдельную пошаговую инструкцию:
+[Развёртывание Kerfuffle на Linux VPS](./deploy/INSTALL-LINUX.md).
 
-Для развёртывания на Linux VPS используйте отдельный production Compose-файл
-и Linux-инструкции в [deploy/compose.production.yaml](./deploy/compose.production.yaml)
-и [deploy/README.md](./deploy/README.md). Скопируйте
-[deploy/.env.production.example](./deploy/.env.production.example) в
-`deploy/.env.production`, создайте PostgreSQL TLS-файлы и храните production
-секреты вне системы контроля версий.
+Production использует `deploy/compose.production.yaml`, Caddy и HTTPS.
+Локальный `deploy/compose.yaml` не предназначен для публикации в интернете.
+Храните production secrets вне системы контроля версий и не открывайте наружу
+порты PostgreSQL и backend.
