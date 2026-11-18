@@ -197,10 +197,34 @@ sudo rm -f deploy/postgres-tls/ca.key
 Не удаляйте `ca.crt`, `server.crt`, `server.key` и `pg_hba.conf`: они
 нужны production Compose. Не загружайте приватные ключи в Git.
 
-## 8. Проверьте конфигурацию и запустите приложение
+## 8. Получите готовые Linux-образы и запустите приложение
 
-Все команды выполняйте из корня репозитория `/opt/kerfuffle`.
+Образы backend и frontend собираются GitHub Actions на Linux runner и
+публикуются в GitHub Container Registry (GHCR). VPS не собирает исходники:
+он только скачивает готовые `linux/amd64` образы. Публикация запускается
+автоматически после push изменений backend/frontend в `main`, а также может
+быть запущена вручную во вкладке **Actions → Publish Linux images → Run
+workflow**.
 
+Перед первым запуском откройте в репозитории GitHub раздел **Actions** и
+убедитесь, что workflow **Publish Linux images** завершился успешно. Затем
+откройте профиль владельца GitHub → **Packages** и проверьте пакеты
+`kerfuffle-backend` и `kerfuffle-frontend`. Для простого развёртывания на VPS
+рекомендуется установить обоим пакетам видимость **Public** (Package settings
+→ Change visibility). Публичные образы можно скачивать без токена. Если
+оставить пакеты Private, перед `docker compose pull` нужно выполнить вход в
+GHCR с токеном GitHub, имеющим только `read:packages`:
+
+```bash
+read -s GHCR_TOKEN
+printf '%s' "$GHCR_TOKEN" | sudo docker login ghcr.io -u GITHUB_USERNAME --password-stdin
+unset GHCR_TOKEN
+```
+
+Замените `GITHUB_USERNAME` на имя пользователя GitHub. Не вставляйте токен
+непосредственно в команду и не сохраняйте его в `.env.production`.
+
+Все следующие команды выполняйте из корня репозитория `/opt/kerfuffle`.
 Сначала проверьте итоговую конфигурацию Compose:
 
 ```bash
@@ -208,13 +232,19 @@ sudo docker compose --env-file deploy/.env.production \
   -f deploy/compose.production.yaml config
 ```
 
-Если Compose сообщает об отсутствующих переменных или ошибках конфигурации,
-исправьте их до запуска. Затем соберите образы и запустите сервисы:
+Затем скачайте опубликованные образы и запустите сервисы:
 
 ```bash
 sudo docker compose --env-file deploy/.env.production \
-  -f deploy/compose.production.yaml up --build -d
+  -f deploy/compose.production.yaml pull
+sudo docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yaml up -d
 ```
+
+В этой конфигурации `migrate` и `backend` используют один backend image.
+Перед запуском backend Compose дождётся успешного выполнения Alembic migration.
+Первый запуск скачает образы и базовые сервисы, поднимет PostgreSQL и
+применит миграции. Сборки Docker на VPS нет.
 
 Посмотрите состояние контейнеров:
 
@@ -222,10 +252,6 @@ sudo docker compose --env-file deploy/.env.production \
 sudo docker compose --env-file deploy/.env.production \
   -f deploy/compose.production.yaml ps
 ```
-
-Первый запуск может занять несколько минут: Docker скачает базовые образы,
-соберёт frontend/backend, запустит PostgreSQL и применит миграции Alembic.
-Backend запускается только после успешного завершения миграций.
 
 Проверьте логи миграции и backend:
 
@@ -337,20 +363,25 @@ sudo bash deploy/test-restore.sh \
 
 ## 12. Обновление приложения
 
-Перед каждым обновлением сделайте и вынесите за пределы VPS резервную копию.
-Затем из корня репозитория:
+После push в `main` дождитесь успешного workflow **Publish Linux images** в
+GitHub Actions. Перед обновлением сделайте и вынесите за пределы VPS резервную
+копию. Затем из корня репозитория:
 
 ```bash
 sudo bash deploy/backup-postgres.sh
 git status
 git pull --ff-only
 sudo docker compose --env-file deploy/.env.production \
-  -f deploy/compose.production.yaml build
+  -f deploy/compose.production.yaml pull
 sudo docker compose --env-file deploy/.env.production \
   -f deploy/compose.production.yaml up -d
 sudo docker compose --env-file deploy/.env.production \
   -f deploy/compose.production.yaml ps
 ```
+
+`git pull` обновляет compose-файлы и конфигурацию на VPS, `compose pull`
+скачивает новые Linux-образы из GHCR, а `up -d` применяет обновление. База
+данных и её Docker volume при этом сохраняются.
 
 Проверьте логи миграций и endpoint `/api/v1/health` после обновления. Не
 применяйте обновление, если в рабочей копии есть незакоммиченные изменения,
