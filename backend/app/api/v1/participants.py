@@ -6,16 +6,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access
+from app.core.permissions import require_system_admin
 from app.db.models import Event, EventParticipant, Person, RouteSheet, User
 from app.db.session import get_db
 
 
 router = APIRouter(tags=["Participants"])
-REGISTRATION_NUMBER_WIDTH = 6
-MAX_REGISTRATIONS_PER_EVENT = 999_999
-
-
 class PersonCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -48,6 +44,7 @@ class ParticipantCreate(BaseModel):
     person_id: int | None = Field(default=None, gt=0)
     person: PersonCreate | None = None
     route_sheet_id: int | None = Field(default=None, gt=0)
+    registration_number: str = Field(pattern=r"^[0-9]{6}$")
 
     @model_validator(mode="after")
     def require_exactly_one_person_source(self):
@@ -86,13 +83,11 @@ def _postgres_error_code(error: IntegrityError) -> str | None:
     return getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
 
 
-def _next_registration_number(registration_count: int) -> str:
-    if registration_count >= MAX_REGISTRATIONS_PER_EVENT:
-        raise HTTPException(
-            status_code=409,
-            detail="The event has reached its participant limit",
-        )
-    return f"{registration_count + 1:0{REGISTRATION_NUMBER_WIDTH}d}"
+def _is_unique_violation(error: IntegrityError) -> bool:
+    return (
+        _postgres_error_code(error) == "23505"
+        or "UNIQUE constraint failed" in str(error.orig)
+    )
 
 
 def register_participant_record(
@@ -168,15 +163,10 @@ def register_participant_record(
             detail="Person is already registered for this event",
         )
 
-    registration_count = session.scalar(
-        select(func.count())
-        .select_from(EventParticipant)
-        .where(EventParticipant.event_id == event_id)
-    )
     registration = EventParticipant(
         event_id=event_id,
         person_id=person.id,
-        registration_number=_next_registration_number(registration_count),
+        registration_number=payload.registration_number,
         route_sheet_id=route_sheet.id if route_sheet else None,
     )
     session.add(registration)
@@ -184,10 +174,10 @@ def register_participant_record(
         session.commit()
     except IntegrityError as error:
         session.rollback()
-        if _postgres_error_code(error) == "23505":
+        if _is_unique_violation(error):
             raise HTTPException(
                 status_code=409,
-                detail="Registration conflicts with an existing participant",
+                detail="Participant or registration number already exists",
             ) from error
         raise
 
@@ -209,7 +199,7 @@ def search_people(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer", "registrar"})
+    require_system_admin(user)
 
     terms = [term for term in query.strip().split() if term]
     if not terms:
@@ -243,7 +233,7 @@ def list_participants(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer", "registrar"})
+    require_system_admin(user)
     rows = session.execute(
         select(EventParticipant, Person, RouteSheet.name)
         .join(Person, Person.id == EventParticipant.person_id)
@@ -274,5 +264,5 @@ def register_participant(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    require_event_access(session, user, event_id, {"organizer", "registrar"})
+    require_system_admin(user)
     return register_participant_record(event_id, payload, session)

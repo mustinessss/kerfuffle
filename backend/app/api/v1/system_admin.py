@@ -21,10 +21,11 @@ from app.core.passwords import (
 )
 from app.db.models import (
     AuthAttempt,
+    AccountInvitation,
     Event,
     EventAccess,
-    OrganizerInvitation,
     PasswordResetToken,
+    Station,
     User,
     UserSession,
 )
@@ -89,7 +90,7 @@ class ResetPassword(BaseModel):
     password: str = Field(min_length=12, max_length=1024)
 
 
-def _require_superadmin(user: User) -> None:
+def _require_system_admin(user: User) -> None:
     if not user.is_system_admin:
         raise HTTPException(status_code=403, detail="Требуются права системного администратора.")
 
@@ -104,7 +105,7 @@ def _is_expired(value: datetime, now: datetime) -> bool:
     return value <= now
 
 
-def _invitation_status(invitation: OrganizerInvitation, now: datetime) -> str:
+def _invitation_status(invitation: AccountInvitation, now: datetime) -> str:
     if invitation.used_at:
         return "used"
     if invitation.revoked_at:
@@ -115,7 +116,7 @@ def _invitation_status(invitation: OrganizerInvitation, now: datetime) -> str:
 
 
 def _send_or_expose_invitation(
-    invitation: OrganizerInvitation,
+    invitation: AccountInvitation,
     token: str,
     session: Session,
     settings: Settings,
@@ -130,7 +131,7 @@ def _send_or_expose_invitation(
                 settings,
                 invitation.email,
                 "Приглашение в Kerfuffle",
-                f"Чтобы активировать аккаунт организатора, откройте ссылку:\n\n{invite_url}\n\n"
+                f"Чтобы активировать аккаунт держателя площадки, откройте ссылку:\n\n{invite_url}\n\n"
                 "Ссылка действует 24 часа и может быть использована один раз.",
             )
         except (OSError, RuntimeError) as exc:
@@ -168,7 +169,7 @@ def list_users(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     users = session.scalars(select(User).order_by(User.created_at, User.id))
     result = []
     for account in users:
@@ -182,11 +183,15 @@ def list_users(
                 "display_name": account.display_name,
                 "is_active": account.is_active,
                 "is_system_admin": account.is_system_admin,
-                "is_organizer": account.is_organizer,
                 "last_login_at": account.last_login_at,
                 "events": [
-                    {"event_id": access.event_id, "role": access.role}
+                    {
+                        "event_id": access.event_id,
+                        "role": access.role,
+                        "station_id": access.station_id,
+                    }
                     for access in accesses
+                    if access.role == "station_operator"
                 ],
             }
         )
@@ -200,7 +205,7 @@ def create_invitation(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     normalized_email = payload.email
     existing_user = session.scalar(
         select(User).where(func.lower(User.email) == normalized_email)
@@ -209,18 +214,18 @@ def create_invitation(
         raise HTTPException(status_code=409, detail="Для этого email уже существует активный аккаунт.")
 
     active_invitation = session.scalar(
-        select(OrganizerInvitation).where(
-            OrganizerInvitation.email == normalized_email,
-            OrganizerInvitation.used_at.is_(None),
-            OrganizerInvitation.revoked_at.is_(None),
-            OrganizerInvitation.expires_at > _now(),
+        select(AccountInvitation).where(
+            AccountInvitation.email == normalized_email,
+            AccountInvitation.used_at.is_(None),
+            AccountInvitation.revoked_at.is_(None),
+            AccountInvitation.expires_at > _now(),
         )
     )
     if active_invitation is not None:
         active_invitation.revoked_at = _now()
 
     token = new_opaque_token()
-    invitation = OrganizerInvitation(
+    invitation = AccountInvitation(
         email=normalized_email,
         token_hash=hash_token(token),
         created_by_user_id=user.id,
@@ -249,7 +254,7 @@ def list_invitations(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     now = _now()
     return [
         {
@@ -261,7 +266,7 @@ def list_invitations(
             "sent_at": invitation.sent_at,
         }
         for invitation in session.scalars(
-            select(OrganizerInvitation).order_by(OrganizerInvitation.created_at.desc())
+            select(AccountInvitation).order_by(AccountInvitation.created_at.desc())
         )
     ]
 
@@ -272,8 +277,8 @@ def revoke_invitation(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
-    invitation = session.get(OrganizerInvitation, invitation_id)
+    _require_system_admin(user)
+    invitation = session.get(AccountInvitation, invitation_id)
     if invitation is None:
         raise HTTPException(status_code=404, detail="Приглашение не найдено.")
     if invitation.used_at is not None:
@@ -291,8 +296,8 @@ def resend_invitation(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    _require_superadmin(user)
-    invitation = session.get(OrganizerInvitation, invitation_id)
+    _require_system_admin(user)
+    invitation = session.get(AccountInvitation, invitation_id)
     if invitation is None:
         raise HTTPException(status_code=404, detail="Приглашение не найдено.")
     if invitation.used_at is not None:
@@ -321,8 +326,8 @@ def accept_invitation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     invitation = session.scalar(
-        select(OrganizerInvitation)
-        .where(OrganizerInvitation.token_hash == hash_token(payload.token))
+        select(AccountInvitation)
+        .where(AccountInvitation.token_hash == hash_token(payload.token))
         .with_for_update()
     )
     now = _now()
@@ -351,21 +356,19 @@ def accept_invitation(
             email=invitation.email,
             display_name=payload.display_name,
             is_active=True,
-            is_organizer=True,
         )
         session.add(account)
     else:
         account.email = invitation.email
         account.display_name = payload.display_name
         account.is_active = True
-        account.is_organizer = True
     account.password_hash = password_hash
     invitation.used_at = now
-    session.query(OrganizerInvitation).filter(
-        OrganizerInvitation.email == invitation.email,
-        OrganizerInvitation.id != invitation.id,
-        OrganizerInvitation.used_at.is_(None),
-        OrganizerInvitation.revoked_at.is_(None),
+    session.query(AccountInvitation).filter(
+        AccountInvitation.email == invitation.email,
+        AccountInvitation.id != invitation.id,
+        AccountInvitation.used_at.is_(None),
+        AccountInvitation.revoked_at.is_(None),
     ).update({"revoked_at": now}, synchronize_session=False)
     try:
         session.commit()
@@ -504,10 +507,10 @@ def block_user(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     account = session.get(User, user_id)
     if account is None or account.is_system_admin:
-        raise HTTPException(status_code=404, detail="Организатор не найден.")
+        raise HTTPException(status_code=404, detail="Пользователь не найден.")
     if account.id == user.id:
         raise HTTPException(status_code=409, detail="Нельзя заблокировать собственную учётную запись.")
     account.is_active = False
@@ -522,10 +525,10 @@ def unblock_user(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     account = session.get(User, user_id)
     if account is None or account.is_system_admin:
-        raise HTTPException(status_code=404, detail="Организатор не найден.")
+        raise HTTPException(status_code=404, detail="Пользователь не найден.")
     account.is_active = True
     session.commit()
     return {"ok": True}
@@ -538,7 +541,7 @@ def create_manual_password_reset_link(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     if (
         settings.environment.strip().lower() == "production"
         and (
@@ -571,48 +574,60 @@ def create_manual_password_reset_link(
     return {"reset_url": reset_url, "expires_in_minutes": int(RESET_TTL.total_seconds() // 60)}
 
 
-@router.put("/users/{user_id}/events/{event_id}")
-def assign_organizer_to_event(
+@router.put("/users/{user_id}/events/{event_id}/stations/{station_id}")
+def assign_station_operator_to_station(
     user_id: int,
     event_id: int,
+    station_id: int,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     account = session.get(User, user_id)
     event = session.get(Event, event_id)
-    if account is None or not account.is_organizer or not account.is_active:
-        raise HTTPException(status_code=404, detail="Активный организатор не найден.")
+    if account is None or account.is_system_admin or not account.is_active:
+        raise HTTPException(status_code=404, detail="Активный пользователь не найден.")
     if event is None:
         raise HTTPException(status_code=404, detail="Мероприятие не найдено.")
+    station = session.get(Station, station_id)
+    if station is None or station.event_id != event.id:
+        raise HTTPException(status_code=404, detail="Площадка не найдена.")
     access = session.scalar(
         select(EventAccess).where(
             EventAccess.user_id == account.id,
             EventAccess.event_id == event.id,
-            EventAccess.role == "organizer",
-            EventAccess.station_id.is_(None),
+            EventAccess.role == "station_operator",
+            EventAccess.station_id == station.id,
         )
     )
     if access is None:
-        session.add(EventAccess(user_id=account.id, event_id=event.id, role="organizer"))
+        session.add(
+            EventAccess(
+                user_id=account.id,
+                event_id=event.id,
+                role="station_operator",
+                station_id=station.id,
+            )
+        )
         session.commit()
     return {"ok": True}
 
 
-@router.delete("/users/{user_id}/events/{event_id}")
-def unassign_organizer_from_event(
+@router.delete("/users/{user_id}/events/{event_id}/stations/{station_id}")
+def unassign_station_operator_from_station(
     user_id: int,
     event_id: int,
+    station_id: int,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    _require_superadmin(user)
+    _require_system_admin(user)
     access = session.scalar(
         select(EventAccess).where(
             EventAccess.user_id == user_id,
             EventAccess.event_id == event_id,
-            EventAccess.role == "organizer",
-            EventAccess.station_id.is_(None),
+            EventAccess.role == "station_operator",
+            EventAccess.station_id == station_id,
         )
     )
     if access is not None:

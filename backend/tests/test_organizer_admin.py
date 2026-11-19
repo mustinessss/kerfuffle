@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
-from app.api.v1.organizer_admin import (
+from app.api.v1.system_admin import (
     InvitationAccept,
     InvitationCreate,
     ResetPassword,
@@ -21,7 +21,7 @@ from app.api.v1.organizer_admin import (
 )
 from app.core.config import Settings
 from app.core.passwords import hash_password, hash_token, verify_password
-from app.db.models import OrganizerInvitation, PasswordResetToken, User, UserSession
+from app.db.models import AccountInvitation, PasswordResetToken, User, UserSession
 from app.db.session import Base
 
 
@@ -69,7 +69,7 @@ def admin_user(session: Session) -> User:
 
 def create_test_invitation(session: Session, admin: User):
     return create_invitation(
-        InvitationCreate(email="ORGANIZER@example.test"),
+        InvitationCreate(email="STAFF@example.test"),
         admin,
         session,
         Settings(
@@ -99,7 +99,7 @@ def production_manual_settings() -> Settings:
     )
 
 
-def test_non_system_admin_cannot_invite_organizer(db_session):
+def test_non_system_admin_cannot_invite_staff_account(db_session):
     regular_user = User(email="regular@example.test", display_name="Regular")
     db_session.add(regular_user)
     db_session.commit()
@@ -125,7 +125,7 @@ def test_production_manual_invitation_returns_link_only_to_admin(db_session):
     )
 
     token = parse_qs(urlsplit(result["invitation_url"]).query)["token"][0]
-    invitation = db_session.query(OrganizerInvitation).one()
+    invitation = db_session.query(AccountInvitation).one()
     assert result["delivery_method"] == "manual"
     assert result["status"] == "sent"
     assert invitation.token_hash == hash_token(token)
@@ -139,7 +139,7 @@ def test_smtp_invitation_takes_precedence_over_manual_delivery(
     admin = admin_user(db_session)
     sent_messages = []
     monkeypatch.setattr(
-        "app.api.v1.organizer_admin.send_email",
+        "app.api.v1.system_admin.send_email",
         lambda *args: sent_messages.append(args),
     )
     settings = production_manual_settings().model_copy(
@@ -167,16 +167,16 @@ def test_invitation_stores_only_token_hash_and_accepts_once(db_session):
     admin = admin_user(db_session)
     invitation_result = create_test_invitation(db_session, admin)
     token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
-    invitation = db_session.query(OrganizerInvitation).one()
+    invitation = db_session.query(AccountInvitation).one()
 
-    assert invitation.email == "organizer@example.test"
+    assert invitation.email == "staff@example.test"
     assert invitation.token_hash != token
     assert invitation.sent_at is not None
 
     result = accept_invitation(
         InvitationAccept(
             token=token,
-            display_name="New Organizer",
+            display_name="New user",
             password="SecurePassword123",
         ),
         request_with_origin(),
@@ -184,10 +184,10 @@ def test_invitation_stores_only_token_hash_and_accepts_once(db_session):
         Settings(),
     )
 
-    assert result == {"ok": True, "email": "organizer@example.test"}
-    organizer = db_session.query(User).filter_by(email="organizer@example.test").one()
-    assert organizer.is_organizer is True
-    assert organizer.password_hash != "SecurePassword123"
+    assert result == {"ok": True, "email": "staff@example.test"}
+    account = db_session.query(User).filter_by(email="staff@example.test").one()
+    assert account.is_system_admin is False
+    assert account.password_hash != "SecurePassword123"
     assert invitation.used_at is not None
 
     with pytest.raises(HTTPException) as error:
@@ -208,14 +208,14 @@ def test_invitation_can_be_revoked_and_cannot_be_accepted(db_session):
     admin = admin_user(db_session)
     invitation_result = create_test_invitation(db_session, admin)
     token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
-    invitation = db_session.query(OrganizerInvitation).one()
+    invitation = db_session.query(AccountInvitation).one()
 
     assert revoke_invitation(invitation.id, admin, db_session) == {"ok": True}
     with pytest.raises(HTTPException) as error:
         accept_invitation(
             InvitationAccept(
                 token=token,
-                display_name="Organizer",
+                display_name="Staff",
                 password="SecurePassword123",
             ),
             request_with_origin(),
@@ -229,7 +229,7 @@ def test_expired_invitation_cannot_be_accepted(db_session):
     admin = admin_user(db_session)
     invitation_result = create_test_invitation(db_session, admin)
     token = parse_qs(urlsplit(invitation_result["invitation_url"]).query)["token"][0]
-    invitation = db_session.query(OrganizerInvitation).one()
+    invitation = db_session.query(AccountInvitation).one()
     invitation.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     db_session.commit()
 
@@ -237,7 +237,7 @@ def test_expired_invitation_cannot_be_accepted(db_session):
         accept_invitation(
             InvitationAccept(
                 token=token,
-                display_name="Organizer",
+                display_name="Staff",
                 password="SecurePassword123",
             ),
             request_with_origin(),
@@ -256,7 +256,7 @@ def test_invitation_accept_rejects_bad_origin(db_session):
         accept_invitation(
             InvitationAccept(
                 token=token,
-                display_name="Organizer",
+                display_name="Staff",
                 password="SecurePassword123",
             ),
             request_with_origin("https://attacker.example"),
@@ -268,10 +268,9 @@ def test_invitation_accept_rejects_bad_origin(db_session):
 
 def test_password_reset_revokes_existing_sessions_and_is_single_use(db_session, monkeypatch):
     account = User(
-        email="organizer@example.test",
-        display_name="Organizer",
+        email="staff@example.test",
+        display_name="Staff",
         password_hash=hash_password("SecurePassword123"),
-        is_organizer=True,
     )
     db_session.add(account)
     db_session.flush()
@@ -286,7 +285,7 @@ def test_password_reset_revokes_existing_sessions_and_is_single_use(db_session, 
 
     sent_messages = []
     monkeypatch.setattr(
-        "app.api.v1.organizer_admin.send_email",
+        "app.api.v1.system_admin.send_email",
         lambda settings, recipient, subject, body: sent_messages.append(body),
     )
     settings = Settings(
@@ -296,7 +295,7 @@ def test_password_reset_revokes_existing_sessions_and_is_single_use(db_session, 
         smtp_from="noreply@example.test",
     )
     assert request_password_reset(
-        ResetRequest(email="ORGANIZER@example.test"),
+        ResetRequest(email="STAFF@example.test"),
         request_with_origin(),
         db_session,
         settings,
@@ -328,7 +327,7 @@ def test_password_reset_revokes_existing_sessions_and_is_single_use(db_session, 
 def test_password_reset_request_is_generic_for_unknown_email(db_session, monkeypatch):
     sent_messages = []
     monkeypatch.setattr(
-        "app.api.v1.organizer_admin.send_email",
+        "app.api.v1.system_admin.send_email",
         lambda *args: sent_messages.append(args),
     )
     result = request_password_reset(
@@ -349,10 +348,9 @@ def test_password_reset_request_is_generic_for_unknown_email(db_session, monkeyp
 def test_superuser_can_create_a_local_reset_link(db_session):
     admin = admin_user(db_session)
     account = User(
-        email="organizer@example.test",
-        display_name="Organizer",
+        email="staff@example.test",
+        display_name="Staff",
         password_hash=hash_password("SecurePassword123"),
-        is_organizer=True,
     )
     db_session.add(account)
     db_session.commit()
@@ -375,9 +373,8 @@ def test_superuser_can_create_a_manual_reset_link_in_production(db_session):
     admin = admin_user(db_session)
     account = User(
         email="manual-reset@example.test",
-        display_name="Organizer",
+        display_name="Staff",
         password_hash=hash_password("SecurePassword123"),
-        is_organizer=True,
     )
     db_session.add(account)
     db_session.commit()
@@ -420,9 +417,8 @@ def test_production_reset_link_is_hidden_when_manual_delivery_is_not_active(
     admin = admin_user(db_session)
     account = User(
         email="reset-disabled@example.test",
-        display_name="Organizer",
+        display_name="Staff",
         password_hash=hash_password("SecurePassword123"),
-        is_organizer=True,
     )
     db_session.add(account)
     db_session.commit()

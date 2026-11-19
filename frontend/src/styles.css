@@ -49,7 +49,9 @@ a.action-card:hover { background: #eee8dc; }
 .action-arrow { color: var(--terracotta); font-size: 21px; }
 .action-board { grid-template-columns: 58px minmax(0, 1fr) auto; }
 .event-form, .board-event-form > div { display: flex; gap: 8px; }
-.event-form input, .board-event-form input { width: 110px; height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); color: var(--ink); }
+.event-form input, .event-form select, .board-event-form input, .board-event-form select { min-width: 0; height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); color: var(--ink); }
+.event-form input, .event-form select { width: 170px; }
+.board-event-form select { width: 210px; }
 .event-form button, .board-event-form button { min-height: 40px; padding: 0 14px; border: 1px solid var(--ink); background: var(--ink); color: var(--surface); cursor: pointer; font-size: 12px; }
 .event-form button:hover, .board-event-form button:hover { background: var(--terracotta); border-color: var(--terracotta); }
 .home-note { margin: 22px 0 0; color: var(--muted); font-size: 12px; }
@@ -64,7 +66,6 @@ a.action-card:hover { background: #eee8dc; }
 .board-heading p { margin: 0; color: var(--muted); font-size: 14px; }
 .board-event-form { display: grid; gap: 7px; }
 .board-event-form label { color: var(--muted); font-size: 11px; }
-.board-event-form input { width: 130px; }
 .board-summary { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 0 42px; border: 1px solid var(--line); background: var(--surface); }
 .board-summary > div { min-height: 84px; padding: 16px 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
 .board-summary > div + div { border-left: 1px solid var(--line); }
@@ -197,7 +198,12 @@ a.action-card:hover { background: #eee8dc; }
 .route-sheet-row span { color: var(--muted); line-height: 1.5; }
 .route-sheet-create-form { padding-top: 12px; border-top: 1px solid var(--line); }
 .route-sheet-create-form label { flex: 1 1 150px; }
-.route-sheet-create-form select[multiple] { min-height: 110px; padding: 6px; }
+.station-checkbox-fieldset { display: grid; gap: 10px; min-width: 100%; margin: 0; padding: 12px; border: 1px solid var(--line); }
+.station-checkbox-fieldset legend { padding: 0 5px; color: var(--muted); font-size: 11px; }
+.station-checkbox-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.station-checkbox-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.station-checkbox-list label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.station-checkbox-list input { accent-color: var(--terracotta); }
 .participant-admin-list { margin-top: 11px; border-top: 1px solid var(--line); }
 .participant-search { display: block; margin-top: 12px; }
 .participant-search input { width: 100%; min-height: 40px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
@@ -248,13 +254,13 @@ a.action-card:hover { background: #eee8dc; }
   .action-copy small { max-width: 230px; line-height: 1.5; }
   .action-board { grid-template-columns: 34px minmax(0, 1fr); }
   .action-board .event-form { grid-column: 2; }
-  .event-form input { flex: 1; width: 50px; }
+  .event-form input, .event-form select { flex: 1; width: 50px; }
   .event-form button { min-width: 100px; }
   .board-page { padding: 36px 0 44px; }
   .board-heading { align-items: start; flex-direction: column; gap: 18px; }
   .board-event-form { width: 100%; }
   .board-event-form > div { width: 100%; }
-  .board-event-form input { flex: 1; width: auto; }
+  .board-event-form select { width: 100%; }
   .board-summary { margin-bottom: 32px; }
   .board-summary > div { min-height: 75px; padding: 12px 10px; }
   .board-summary span { font-size: 8px; letter-spacing: .7px; }

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access
+from app.core.permissions import require_event_access, require_system_admin
 from app.db.models import Event, EventAccess, User
 from app.db.session import get_db
 
@@ -57,22 +57,10 @@ def create_event(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    if not user.is_system_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System administrator role required",
-        )
+    require_system_admin(user)
 
     event = Event(name=payload.name, event_date=payload.event_date)
     session.add(event)
-    session.flush()
-    session.add(
-        EventAccess(
-            user_id=user.id,
-            event_id=event.id,
-            role="organizer",
-        )
-    )
     session.commit()
     session.refresh(event)
     return event_response(event)

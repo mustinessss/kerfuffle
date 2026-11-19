@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access
+from app.core.permissions import require_event_access, require_system_admin
 from app.db.models import Event, Score, Station, User
 from app.db.session import get_db
 
@@ -91,7 +91,7 @@ def list_stations(
         raise HTTPException(status_code=404, detail="Event not found")
     accesses = require_event_access(session, user, event_id)
     statement = select(Station).where(Station.event_id == event_id)
-    if not any(access.role in {"organizer", "registrar"} for access in accesses):
+    if not user.is_system_admin:
         assigned_station_ids = [
             access.station_id
             for access in accesses
@@ -115,7 +115,7 @@ def create_station(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer"})
+    require_system_admin(user)
 
     station = Station(event_id=event_id, **payload.model_dump())
     session.add(station)
@@ -143,7 +143,7 @@ def update_station(
     station = session.get(Station, station_id)
     if station is None:
         raise HTTPException(status_code=404, detail="Station not found")
-    require_event_access(session, user, station.event_id, {"organizer"})
+    require_system_admin(user)
 
     updates = payload.model_dump(exclude_unset=True)
     scale_fields = {"score_min", "score_max", "score_step"}

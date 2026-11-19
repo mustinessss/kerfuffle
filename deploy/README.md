@@ -61,10 +61,11 @@ Enter the administrator email and a password twice when prompted. The password
 must be at least 12 characters with lowercase, uppercase, and a digit. Then
 open `http://localhost:5173/login`.
 
-## Organizer accounts and recovery
+## Station-holder accounts and recovery
 
-The system administrator creates organizer invitations at
-`http://localhost:5173/admin/users`. For real email delivery, configure
+The system administrator creates station-holder invitations and assigns each
+account to its permitted stations at `http://localhost:5173/admin/users`. For
+real email delivery, configure
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and
 `SMTP_USE_TLS` in `deploy/.env`, then recreate the backend:
 

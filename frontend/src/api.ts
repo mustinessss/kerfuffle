@@ -2,8 +2,6 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface LeaderboardParticipant {
-  first_name: string;
-  last_name: string;
   registration_number: string;
   place: number;
   total_points: number;
@@ -24,6 +22,7 @@ export interface LeaderboardResponse {
     event_date: string;
   };
   stations_total: number;
+  route_sheet_id: number | null;
   stations: Array<{
     id: number;
     name: string;
@@ -37,10 +36,9 @@ export interface CurrentAccount {
   email: string | null;
   display_name: string;
   is_system_admin: boolean;
-  is_organizer: boolean;
   access: Array<{
     event_id: number;
-    role: "organizer" | "registrar" | "station_operator";
+    role: "station_operator";
     station_id: number | null;
   }>;
 }
@@ -49,6 +47,10 @@ export interface EventSummary {
   id: number;
   name: string;
   event_date: string;
+}
+
+export interface PublicEventSummary extends EventSummary {
+  route_sheets: Array<{ id: number; name: string }>;
 }
 
 export interface StationSummary {
@@ -74,7 +76,7 @@ export interface AccessCodeSummary {
   event_id: number;
   station_id: number | null;
   station_name: string | null;
-  role: "registrar" | "station_operator";
+  role: "station_operator";
   label: string;
   is_active: boolean;
   created_at: string;
@@ -86,7 +88,7 @@ export interface VerifiedAccess {
   access_token: string;
   token_type: "bearer";
   expires_at: string;
-  role: "registrar" | "station_operator";
+  role: "station_operator";
   event_id: number;
   station: {
     id: number;
@@ -97,7 +99,7 @@ export interface VerifiedAccess {
   } | null;
 }
 
-export interface CreatedOrganizer {
+export interface CreatedInvitation {
   id: number;
   email: string;
   status: "sent" | "pending";
@@ -109,7 +111,7 @@ export interface CreatedOrganizer {
 export interface AdminUser extends CurrentAccount {
   is_active: boolean;
   last_login_at: string | null;
-  events: Array<{ event_id: number; role: string }>;
+  events: Array<{ event_id: number; role: "station_operator"; station_id: number }>;
 }
 
 export interface AdminInvitation {
@@ -246,9 +248,20 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   }
 }
 
-export function getPublicLeaderboard(eventId: number, signal?: AbortSignal) {
+export function getPublicEvents(signal?: AbortSignal) {
+  return requestJson<PublicEventSummary[]>("/public/events", { signal });
+}
+
+export function getPublicLeaderboard(
+  eventId: number,
+  routeSheetId?: number,
+  signal?: AbortSignal,
+) {
+  const query = routeSheetId === undefined
+    ? ""
+    : `?route_sheet_id=${encodeURIComponent(routeSheetId)}`;
   return requestJson<LeaderboardResponse>(
-    `/public/events/${encodeURIComponent(eventId)}/leaderboard`,
+    `/public/events/${encodeURIComponent(eventId)}/leaderboard${query}`,
     { signal },
   );
 }
@@ -268,7 +281,7 @@ export function logoutFromAccount() {
   return requestJson<{ ok: boolean }>("/auth/logout", { method: "POST", body: {} });
 }
 
-export function acceptOrganizerInvitation(payload: { token: string; display_name: string; password: string }) {
+export function acceptAccountInvitation(payload: { token: string; display_name: string; password: string }) {
   return requestJson<{ ok: boolean; email: string }>("/public/invitations/accept", {
     method: "POST",
     body: payload,
@@ -297,8 +310,8 @@ export function getAdminInvitations(signal?: AbortSignal) {
   return requestJson<AdminInvitation[]>("/system-admin/invitations", { signal });
 }
 
-export function inviteOrganizer(email: string) {
-  return requestJson<CreatedOrganizer>("/system-admin/invitations", {
+export function inviteStaffAccount(email: string) {
+  return requestJson<CreatedInvitation>("/system-admin/invitations", {
     method: "POST",
     body: { email },
   });
@@ -312,7 +325,7 @@ export function revokeInvitation(invitationId: number) {
 }
 
 export function resendInvitation(invitationId: number) {
-  return requestJson<CreatedOrganizer>(`/system-admin/invitations/${invitationId}/resend`, {
+  return requestJson<CreatedInvitation>(`/system-admin/invitations/${invitationId}/resend`, {
     method: "POST",
     body: {},
   });
@@ -332,11 +345,19 @@ export function createManualPasswordResetLink(userId: number) {
   );
 }
 
-export function setOrganizerEventAccess(userId: number, eventId: number, assigned: boolean) {
-  return requestJson<{ ok: boolean }>(`/system-admin/users/${userId}/events/${eventId}`, {
-    method: assigned ? "PUT" : "DELETE",
-    body: assigned ? {} : undefined,
-  });
+export function setUserStationAccess(
+  userId: number,
+  eventId: number,
+  stationId: number,
+  assigned: boolean,
+) {
+  return requestJson<{ ok: boolean }>(
+    `/system-admin/users/${userId}/events/${eventId}/stations/${stationId}`,
+    {
+      method: assigned ? "PUT" : "DELETE",
+      body: assigned ? {} : undefined,
+    },
+  );
 }
 
 export function getEvents(accessToken = "", signal?: AbortSignal) {
@@ -363,13 +384,6 @@ export function createStation(
 ) {
   return requestJson<StationSummary>(`/events/${eventId}/stations`, {
     accessToken,
-    method: "POST",
-    body: payload,
-  });
-}
-
-export function createOrganizer(payload: { email: string }) {
-  return requestJson<CreatedOrganizer>("/system-admin/invitations", {
     method: "POST",
     body: payload,
   });
@@ -405,18 +419,6 @@ export function verifyAccessCode(code: string) {
   return requestJson<VerifiedAccess>("/public/access/verify", {
     method: "POST",
     body: { code },
-  });
-}
-
-export function registerWithAccessCode(
-  accessToken: string,
-  person: { first_name: string; last_name: string },
-  routeSheetId: number | null,
-) {
-  return requestJson<RegisteredParticipant>("/public/access/register", {
-    accessToken,
-    method: "POST",
-    body: { person, route_sheet_id: routeSheetId },
   });
 }
 
@@ -475,16 +477,22 @@ export function createRouteSheet(
   });
 }
 
+export function updateRouteSheet(
+  routeSheetId: number,
+  accessToken: string,
+  payload: { name: string; capacity: number | null; station_ids: number[] },
+) {
+  return requestJson<RouteSheetSummary>(`/route-sheets/${routeSheetId}`, {
+    accessToken,
+    method: "PATCH",
+    body: payload,
+  });
+}
+
 export function deleteRouteSheet(routeSheetId: number, accessToken: string) {
   return requestJson<{ ok: boolean }>(`/route-sheets/${routeSheetId}`, {
     accessToken,
     method: "DELETE",
-  });
-}
-
-export function getRouteSheetsWithAccessCode(accessToken: string) {
-  return requestJson<RouteSheetSummary[]>("/public/access/route-sheets", {
-    accessToken,
   });
 }
 
@@ -508,13 +516,23 @@ export async function getParticipants(
 export function registerParticipant(
   eventId: number,
   accessToken: string,
-  person: { first_name: string; last_name: string },
+  person: {
+    first_name: string;
+    last_name: string;
+    workplace_or_study: string;
+    phone: string;
+  },
   routeSheetId: number | null,
+  registrationNumber: string,
 ) {
   return requestJson<RegisteredParticipant>(`/events/${eventId}/participants`, {
     accessToken,
     method: "POST",
-    body: { person, route_sheet_id: routeSheetId },
+    body: {
+      person,
+      route_sheet_id: routeSheetId,
+      registration_number: registrationNumber,
+    },
   });
 }
 

@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.api.v1.participants import (
     ParticipantCreate,
     PersonCreate,
-    _next_registration_number,
     list_participants,
     register_participant,
     search_people,
@@ -52,34 +51,19 @@ def db_session():
 
 @pytest.fixture
 def event_team(db_session):
-    organizer = User(legacy_identity_subject="organizer", display_name="Organizer")
+    admin = User(legacy_identity_subject="admin", display_name="Admin", is_system_admin=True)
     registrar = User(legacy_identity_subject="registrar", display_name="Registrar")
     operator = User(legacy_identity_subject="operator", display_name="Operator")
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 11))
-    db_session.add_all([organizer, registrar, operator, event_record])
+    db_session.add_all([admin, registrar, operator, event_record])
     db_session.flush()
-    db_session.add_all(
-        [
-            EventAccess(
-                user_id=organizer.id,
-                event_id=event_record.id,
-                role="organizer",
-            ),
-            EventAccess(
-                user_id=registrar.id,
-                event_id=event_record.id,
-                role="registrar",
-            ),
-        ]
-    )
-    db_session.flush()
-    return event_record, organizer, registrar, operator
+    return event_record, admin, registrar, operator
 
 
-def test_organizer_creates_station_and_registrar_can_list_it(
+def test_admin_creates_station_and_regular_users_cannot_list_it(
     db_session, event_team
 ):
-    event_record, organizer, registrar, _ = event_team
+    event_record, admin, registrar, _ = event_team
     response = create_station(
         event_record.id,
         StationCreate(
@@ -88,7 +72,7 @@ def test_organizer_creates_station_and_registrar_can_list_it(
             score_max=10,
             score_step=2,
         ),
-        organizer,
+        admin,
         db_session,
     )
 
@@ -100,11 +84,12 @@ def test_organizer_creates_station_and_registrar_can_list_it(
         "score_max": 10,
         "score_step": 2,
     }
-    assert list_stations(event_record.id, registrar, db_session) == [response]
+    with pytest.raises(HTTPException):
+        list_stations(event_record.id, registrar, db_session)
 
 
-def test_only_organizer_can_create_or_update_stations(db_session, event_team):
-    event_record, organizer, registrar, _ = event_team
+def test_only_system_admin_can_create_or_update_stations(db_session, event_team):
+    event_record, admin, registrar, _ = event_team
 
     with pytest.raises(HTTPException) as error:
         create_station(
@@ -135,7 +120,7 @@ def test_only_organizer_can_create_or_update_stations(db_session, event_team):
 
 
 def test_station_operator_only_sees_assigned_station(db_session, event_team):
-    event_record, organizer, _, operator = event_team
+    event_record, admin, _, operator = event_team
     assigned = Station(
         event_id=event_record.id,
         name="Assigned",
@@ -162,7 +147,7 @@ def test_station_operator_only_sees_assigned_station(db_session, event_team):
     )
     db_session.flush()
 
-    organizer_stations = list_stations(event_record.id, organizer, db_session)
+    organizer_stations = list_stations(event_record.id, admin, db_session)
     operator_stations = list_stations(event_record.id, operator, db_session)
 
     assert len(organizer_stations) == 2
@@ -170,7 +155,7 @@ def test_station_operator_only_sees_assigned_station(db_session, event_team):
 
 
 def test_station_scale_validation_and_post_score_lock(db_session, event_team):
-    event_record, organizer, _, _ = event_team
+    event_record, admin, _, _ = event_team
     with pytest.raises(ValidationError):
         StationCreate(name="Stage", score_min=0, score_max=5, score_step=2)
 
@@ -187,7 +172,7 @@ def test_station_scale_validation_and_post_score_lock(db_session, event_team):
     registration = EventParticipant(
         event_id=event_record.id,
         person_id=person.id,
-        registration_number="0001",
+        registration_number="000001",
     )
     db_session.add(registration)
     db_session.flush()
@@ -204,7 +189,7 @@ def test_station_scale_validation_and_post_score_lock(db_session, event_team):
         update_station(
             station.id,
             StationUpdate(score_max=10),
-            organizer,
+            admin,
             db_session,
         )
     assert error.value.status_code == 409
@@ -212,16 +197,16 @@ def test_station_scale_validation_and_post_score_lock(db_session, event_team):
     response = update_station(
         station.id,
         StationUpdate(name="Updated name"),
-        organizer,
+        admin,
         db_session,
     )
     assert response["name"] == "Updated name"
 
 
-def test_registration_creates_person_and_sequential_six_digit_number(
+def test_registration_creates_person_with_manual_six_digit_number(
     db_session, event_team
 ):
-    event_record, _, registrar, _ = event_team
+    event_record, admin, _, _ = event_team
     response = register_participant(
         event_record.id,
         ParticipantCreate(
@@ -229,30 +214,34 @@ def test_registration_creates_person_and_sequential_six_digit_number(
                 first_name="  Alex ",
                 last_name=" Example ",
                 phone="  +70000000000 ",
-            )
+                workplace_or_study="  Example school ",
+            ),
+            registration_number="482019",
         ),
-        registrar,
+        admin,
         db_session,
     )
 
-    assert response["registration_number"] == "000001"
+    assert response["registration_number"] == "482019"
     assert response["first_name"] == "Alex"
     assert response["last_name"] == "Example"
     assert "qr_token" not in response
-    assert "phone" not in response
+    person = db_session.query(Person).one()
+    assert person.phone == "+70000000000"
+    assert person.workplace_or_study == "Example school"
 
 
 def test_registration_reuses_person_and_rejects_duplicate(
     db_session, event_team
 ):
-    event_record, _, registrar, _ = event_team
+    event_record, admin, _, _ = event_team
     person = Person(first_name="Alex", last_name="Example")
     db_session.add(person)
     db_session.flush()
     first = register_participant(
         event_record.id,
-        ParticipantCreate(person_id=person.id),
-        registrar,
+        ParticipantCreate(person_id=person.id, registration_number="000001"),
+        admin,
         db_session,
     )
     second_person = Person(first_name="Jordan", last_name="Example")
@@ -260,8 +249,8 @@ def test_registration_reuses_person_and_rejects_duplicate(
     db_session.flush()
     second = register_participant(
         event_record.id,
-        ParticipantCreate(person_id=second_person.id),
-        registrar,
+        ParticipantCreate(person_id=second_person.id, registration_number="000002"),
+        admin,
         db_session,
     )
 
@@ -272,8 +261,8 @@ def test_registration_reuses_person_and_rejects_duplicate(
     with pytest.raises(HTTPException) as error:
         register_participant(
             event_record.id,
-            ParticipantCreate(person_id=person.id),
-            registrar,
+            ParticipantCreate(person_id=person.id, registration_number="000003"),
+            admin,
             db_session,
         )
     assert error.value.status_code == 409
@@ -291,21 +280,27 @@ def test_registration_lookup_requires_six_numeric_digits_and_rejects_qr_fields()
         ParticipantLookup(qr_token="a1111111-1111-4111-8111-111111111111")
 
 
-def test_registration_number_limit_is_six_digits():
-    assert _next_registration_number(0) == "000001"
-    assert _next_registration_number(999_998) == "999999"
-    with pytest.raises(HTTPException) as error:
-        _next_registration_number(999_999)
-    assert error.value.status_code == 409
+def test_registration_number_must_be_six_digits():
+    with pytest.raises(ValidationError):
+        ParticipantCreate(
+            person=PersonCreate(first_name="Alex", last_name="Example"),
+            registration_number="12345",
+        )
+    with pytest.raises(ValidationError):
+        ParticipantCreate(
+            person=PersonCreate(first_name="Alex", last_name="Example"),
+            registration_number="12A456",
+        )
 
 
-def test_registration_requires_registrar_or_organizer(db_session, event_team):
+def test_registration_requires_system_admin(db_session, event_team):
     event_record, _, _, operator = event_team
     with pytest.raises(HTTPException) as error:
         register_participant(
             event_record.id,
             ParticipantCreate(
-                person=PersonCreate(first_name="Alex", last_name="Example")
+                person=PersonCreate(first_name="Alex", last_name="Example"),
+                registration_number="123456",
             ),
             operator,
             db_session,
@@ -318,7 +313,7 @@ def test_registration_requires_registrar_or_organizer(db_session, event_team):
 def test_people_search_and_participant_list_hide_optional_personal_data(
     db_session, event_team
 ):
-    event_record, _, registrar, _ = event_team
+    event_record, admin, _, _ = event_team
     person = Person(
         first_name="Alex",
         last_name="Example",
@@ -329,13 +324,13 @@ def test_people_search_and_participant_list_hide_optional_personal_data(
     db_session.flush()
     register_participant(
         event_record.id,
-        ParticipantCreate(person_id=person.id),
-        registrar,
+        ParticipantCreate(person_id=person.id, registration_number="000001"),
+        admin,
         db_session,
     )
 
-    results = search_people(event_record.id, "alex example", 20, registrar, db_session)
-    participants = list_participants(event_record.id, 100, 0, registrar, db_session)
+    results = search_people(event_record.id, "alex example", 20, admin, db_session)
+    participants = list_participants(event_record.id, 100, 0, admin, db_session)
 
     assert results == [{"id": person.id, "first_name": "Alex", "last_name": "Example"}]
     assert "phone" not in participants[0]

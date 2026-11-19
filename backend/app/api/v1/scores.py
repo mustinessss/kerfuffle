@@ -5,12 +5,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access, require_station_access
+from app.core.permissions import require_station_access, require_system_admin
 from app.db.models import (
     Event,
     EventParticipant,
     Person,
-    RouteSheetStation,
     Score,
     ScoreAudit,
     Station,
@@ -136,14 +135,6 @@ def lookup_participant_record(
     if row is None:
         raise HTTPException(status_code=404, detail="Participant not found")
     registration, person = row
-    if registration.route_sheet_id is not None and session.scalar(
-        select(RouteSheetStation.station_id).where(
-            RouteSheetStation.route_sheet_id == registration.route_sheet_id,
-            RouteSheetStation.station_id == station.id,
-        )
-    ) is None:
-        raise HTTPException(status_code=404, detail="Participant not found at this station")
-
     score = session.scalar(
         select(Score).where(
             Score.event_participant_id == registration.id,
@@ -171,16 +162,6 @@ def create_score_record(
     registration = session.get(EventParticipant, payload.event_participant_id)
     if registration is None or registration.event_id != station.event_id:
         raise HTTPException(status_code=404, detail="Participant not found")
-    if registration.route_sheet_id is not None and session.scalar(
-        select(RouteSheetStation.station_id).where(
-            RouteSheetStation.route_sheet_id == registration.route_sheet_id,
-            RouteSheetStation.station_id == station.id,
-        )
-    ) is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Participant is not assigned to this station",
-        )
     _validate_points(payload.points, station)
 
     score = Score(
@@ -201,7 +182,7 @@ def create_score_record(
         if _postgres_error_code(error) == "23514":
             raise HTTPException(
                 status_code=422,
-                detail="Participant, route sheet, station or points do not match",
+                detail="Participant, station or points do not match",
             ) from error
         raise
     session.refresh(score)
@@ -219,7 +200,7 @@ def lookup_participant(
     session: Session = Depends(get_db),
 ):
     require_station_access(
-        session, user, station_id, {"station_operator", "organizer"}
+        session, user, station_id, {"station_operator"}
     )
     return lookup_participant_record(station_id, payload, session)
 
@@ -236,12 +217,12 @@ def create_score(
     session: Session = Depends(get_db),
 ):
     require_station_access(
-        session, user, station_id, {"station_operator", "organizer"}
+        session, user, station_id, {"station_operator"}
     )
     return create_score_record(station_id, payload, session)
 
 
-@router.patch("/scores/{score_id}", summary="Исправить оценку организатором")
+@router.patch("/scores/{score_id}", summary="Исправить оценку системным администратором")
 def update_score(
     score_id: int,
     payload: ScoreUpdate,
@@ -256,7 +237,7 @@ def update_score(
     station = session.get(Station, score.station_id)
     if station is None:
         raise HTTPException(status_code=404, detail="Station not found")
-    require_event_access(session, user, station.event_id, {"organizer"})
+    require_system_admin(user)
     _validate_points(payload.points, station)
 
     if score.is_annulled:
@@ -292,7 +273,7 @@ def update_score(
 
 @router.post(
     "/scores/{score_id}/annul",
-    summary="Аннулировать оценку организатором",
+    summary="Аннулировать оценку системным администратором",
 )
 def annul_score(
     score_id: int,
@@ -308,7 +289,7 @@ def annul_score(
     station = session.get(Station, score.station_id)
     if station is None:
         raise HTTPException(status_code=404, detail="Station not found")
-    require_event_access(session, user, station.event_id, {"organizer"})
+    require_system_admin(user)
     if score.is_annulled:
         raise HTTPException(status_code=409, detail="Score is already annulled")
 
@@ -339,7 +320,7 @@ def list_event_scores(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer"})
+    require_system_admin(user)
     rows = session.execute(
         select(Score, EventParticipant, Person, Station)
         .join(EventParticipant, EventParticipant.id == Score.event_participant_id)

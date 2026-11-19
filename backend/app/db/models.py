@@ -80,9 +80,6 @@ class User(Base):
     is_system_admin: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
-    is_organizer: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -111,10 +108,10 @@ class UserSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class OrganizerInvitation(Base):
-    __tablename__ = "organizer_invitations"
+class AccountInvitation(Base):
+    __tablename__ = "account_invitations"
     __table_args__ = (
-        Index("organizer_invitations_email_status_idx", "email", "expires_at"),
+        Index("account_invitations_email_status_idx", "email", "expires_at"),
     )
 
     id: Mapped[int] = mapped_column(ID_TYPE, Identity(always=True), primary_key=True)
@@ -245,6 +242,10 @@ class EventParticipant(Base):
             "btrim(registration_number) <> ''",
             name="event_participants_registration_number_not_empty",
         ),
+        CheckConstraint(
+            "registration_number ~ '^[0-9]{6}$'",
+            name="event_participants_registration_number_format",
+        ).ddl_if(dialect="postgresql"),
         ForeignKeyConstraint(
             ["route_sheet_id", "event_id"],
             ["route_sheets.id", "route_sheets.event_id"],
@@ -273,12 +274,11 @@ class EventAccess(Base):
     __tablename__ = "event_access"
     __table_args__ = (
         CheckConstraint(
-            "(role = 'station_operator' AND station_id IS NOT NULL) OR "
-            "(role IN ('organizer', 'registrar') AND station_id IS NULL)",
+            "role = 'station_operator' AND station_id IS NOT NULL",
             name="access_station_required_for_operator",
         ),
         CheckConstraint(
-            "role IN ('organizer', 'registrar', 'station_operator')",
+            "role = 'station_operator'",
             name="event_access_valid_role",
         ),
         ForeignKeyConstraint(
@@ -387,8 +387,7 @@ class AccessCode(Base):
     __tablename__ = "access_codes"
     __table_args__ = (
         CheckConstraint(
-            "(role = 'registrar' AND station_id IS NULL) OR "
-            "(role = 'station_operator' AND station_id IS NOT NULL)",
+            "role = 'station_operator' AND station_id IS NOT NULL",
             name="access_codes_valid_scope",
         ),
         ForeignKeyConstraint(

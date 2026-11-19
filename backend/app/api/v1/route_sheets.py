@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access
+from app.core.permissions import require_system_admin
 from app.db.models import (
     Event,
     EventParticipant,
@@ -43,6 +43,44 @@ class RouteSheetCreate(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("Station IDs must be unique")
         return value
+
+
+class RouteSheetUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    capacity: int | None = Field(default=None, gt=0)
+    station_ids: list[int] | None = Field(default=None, min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Route sheet name must not be blank")
+        return value
+
+    @field_validator("station_ids")
+    @classmethod
+    def station_ids_must_be_unique_and_positive(
+        cls, value: list[int] | None
+    ) -> list[int] | None:
+        if value is None:
+            return value
+        if any(station_id <= 0 for station_id in value):
+            raise ValueError("Station IDs must be positive")
+        if len(set(value)) != len(value):
+            raise ValueError("Station IDs must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def name_cannot_be_null(self):
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("Route sheet name cannot be null")
+        return self
+
 
 def list_route_sheets_for_event(event_id: int, session: Session) -> list[dict]:
     sheets = list(
@@ -105,7 +143,7 @@ def list_route_sheets(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer", "registrar"})
+    require_system_admin(user)
     return list_route_sheets_for_event(event_id, session)
 
 
@@ -125,7 +163,7 @@ def create_route_sheet(
     )
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer"})
+    require_system_admin(user)
 
     found_station_ids = set(
         session.scalars(
@@ -173,6 +211,72 @@ def create_route_sheet(
     )
 
 
+@router.patch(
+    "/route-sheets/{route_sheet_id}",
+    summary="Изменить маршрутный лист",
+)
+def update_route_sheet(
+    route_sheet_id: int,
+    payload: RouteSheetUpdate,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db),
+):
+    sheet = session.scalar(
+        select(RouteSheet).where(RouteSheet.id == route_sheet_id).with_for_update()
+    )
+    if sheet is None:
+        raise HTTPException(status_code=404, detail="Route sheet not found")
+    require_system_admin(user)
+
+    updates = payload.model_dump(exclude_unset=True)
+    station_ids = updates.pop("station_ids", None)
+    if station_ids is not None:
+        found_station_ids = set(
+            session.scalars(
+                select(Station.id).where(
+                    Station.event_id == sheet.event_id,
+                    Station.id.in_(station_ids),
+                )
+            )
+        )
+        if found_station_ids != set(station_ids):
+            raise HTTPException(
+                status_code=404,
+                detail="Every route sheet station must belong to this event",
+            )
+        session.execute(
+            delete(RouteSheetStation).where(
+                RouteSheetStation.route_sheet_id == sheet.id
+            )
+        )
+        session.add_all(
+            RouteSheetStation(
+                route_sheet_id=sheet.id,
+                event_id=sheet.event_id,
+                station_id=station_id,
+            )
+            for station_id in station_ids
+        )
+
+    for field, value in updates.items():
+        setattr(sheet, field, value)
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        if _postgres_error_code(error) == "23505":
+            raise HTTPException(
+                status_code=409,
+                detail="A route sheet with this name already exists in the event",
+            ) from error
+        raise
+    return next(
+        item
+        for item in list_route_sheets_for_event(sheet.event_id, session)
+        if item["id"] == sheet.id
+    )
+
+
 @router.delete(
     "/route-sheets/{route_sheet_id}",
     summary="Удалить маршрутный лист без регистраций",
@@ -193,7 +297,7 @@ def delete_route_sheet(
     )
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event.id, {"organizer"})
+    require_system_admin(user)
     sheet = session.scalar(
         select(RouteSheet)
         .where(RouteSheet.id == route_sheet_id)

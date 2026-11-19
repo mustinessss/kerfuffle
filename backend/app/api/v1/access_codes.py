@@ -11,8 +11,6 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.v1.participants import ParticipantCreate, register_participant_record
-from app.api.v1.route_sheets import list_route_sheets_for_event
 from app.api.v1.scores import (
     ParticipantLookup,
     ScoreCreate,
@@ -21,7 +19,7 @@ from app.api.v1.scores import (
 )
 from app.core.auth import get_current_user
 from app.core.config import Settings, get_settings
-from app.core.permissions import require_event_access
+from app.core.permissions import require_system_admin
 from app.db.models import (
     AccessCode,
     AccessCodeAttempt,
@@ -54,7 +52,7 @@ def normalize_access_code(value: str) -> str:
 class AccessCodeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: str = Field(pattern="^(registrar|station_operator)$")
+    role: str = Field(pattern="^station_operator$")
     code: str = Field(min_length=8, max_length=16, pattern=ACCESS_CODE_REGEX)
     station_id: int | None = Field(default=None, gt=0)
 
@@ -67,7 +65,7 @@ class AccessCodeCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_role_scope(self):
-        if (self.role == "station_operator") != (self.station_id is not None):
+        if self.station_id is None:
             raise ValueError("A station code must name exactly one station")
         return self
 
@@ -158,7 +156,7 @@ def get_access_session(
 
 @router.get(
     "/events/{event_id}/access-codes",
-    summary="Список кодов доступа организатора",
+    summary="Список кодов доступа держателей площадок",
 )
 def list_access_codes(
     event_id: int,
@@ -167,7 +165,7 @@ def list_access_codes(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer"})
+    require_system_admin(user)
     rows = session.execute(
         select(AccessCode, Station.name)
         .outerjoin(Station, Station.id == AccessCode.station_id)
@@ -180,7 +178,7 @@ def list_access_codes(
 @router.post(
     "/events/{event_id}/access-codes",
     status_code=status.HTTP_201_CREATED,
-    summary="Создать код регистратора или площадки",
+    summary="Создать код доступа держателя площадки",
 )
 def create_access_code(
     event_id: int,
@@ -192,7 +190,7 @@ def create_access_code(
     secret = _required_secret(settings)
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    require_event_access(session, user, event_id, {"organizer"})
+    require_system_admin(user)
     station_name = None
     if payload.station_id is not None:
         station = session.get(Station, payload.station_id)
@@ -210,7 +208,7 @@ def create_access_code(
         station_id=payload.station_id,
         created_by_user_id=user.id,
         role=payload.role,
-        label="Код регистратора" if payload.role == "registrar" else "Код площадки",
+        label="Код площадки",
         secret_hash=secret_hash,
     )
     session.add(access_code)
@@ -240,7 +238,7 @@ def revoke_access_code(
     access_code = session.get(AccessCode, code_id)
     if access_code is None:
         raise HTTPException(status_code=404, detail="Access code not found")
-    require_event_access(session, user, access_code.event_id, {"organizer"})
+    require_system_admin(user)
     if not access_code.is_active:
         raise HTTPException(status_code=409, detail="Access code is already disabled")
     access_code.is_active = False
@@ -251,7 +249,7 @@ def revoke_access_code(
 
 @router.post(
     "/public/access/verify",
-    summary="Проверить код регистратора или площадки",
+    summary="Проверить код держателя площадки",
 )
 def verify_access_code(
     payload: AccessCodeVerification,
@@ -326,38 +324,6 @@ def verify_access_code(
             else None
         ),
     }
-
-
-@router.get(
-    "/public/access/route-sheets",
-    summary="Список маршрутных листов для регистратора",
-)
-def list_route_sheets_with_access_code(
-    access: tuple[AccessSession, AccessCode] = Depends(get_access_session),
-    session: Session = Depends(get_db),
-):
-    _, code = access
-    if code.role != "registrar":
-        raise HTTPException(status_code=403, detail="Registration access required")
-    return list_route_sheets_for_event(code.event_id, session)
-
-
-@router.post(
-    "/public/access/register",
-    status_code=status.HTTP_201_CREATED,
-    summary="Зарегистрировать участника по коду мероприятия",
-)
-def register_with_access_code(
-    payload: ParticipantCreate,
-    access: tuple[AccessSession, AccessCode] = Depends(get_access_session),
-    session: Session = Depends(get_db),
-):
-    _, code = access
-    if code.role != "registrar":
-        raise HTTPException(status_code=403, detail="Registration access required")
-    return register_participant_record(code.event_id, payload, session)
-
-
 @router.post(
     "/public/access/participant-lookup",
     summary="Найти участника по коду площадки",

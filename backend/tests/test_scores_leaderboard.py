@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-from app.api.v1.leaderboard import read_public_leaderboard
+from app.api.v1.leaderboard import list_public_events, read_public_leaderboard
 from app.api.v1.scores import (
     ParticipantLookup,
     ScoreAnnulment,
@@ -22,6 +22,8 @@ from app.db.models import (
     EventAccess,
     EventParticipant,
     Person,
+    RouteSheet,
+    RouteSheetStation,
     Score,
     ScoreAudit,
     Station,
@@ -48,7 +50,11 @@ def db_session():
 
 @pytest.fixture
 def scoring_setup(db_session):
-    organizer = User(legacy_identity_subject="organizer", display_name="Organizer")
+    organizer = User(
+        legacy_identity_subject="admin",
+        display_name="Admin",
+        is_system_admin=True,
+    )
     operator = User(legacy_identity_subject="operator", display_name="Operator")
     other_user = User(legacy_identity_subject="other", display_name="Other")
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 11))
@@ -113,11 +119,6 @@ def scoring_setup(db_session):
     db_session.flush()
     db_session.add_all(
         [
-            EventAccess(
-                user_id=organizer.id,
-                event_id=event_record.id,
-                role="organizer",
-            ),
             EventAccess(
                 user_id=operator.id,
                 event_id=event_record.id,
@@ -239,7 +240,7 @@ def test_only_assigned_station_can_be_used_for_lookup_or_scoring(
     assert error.value.status_code == 403
 
 
-def test_only_organizer_can_correct_a_score(db_session, scoring_setup):
+def test_only_system_admin_can_correct_a_score(db_session, scoring_setup):
     station = scoring_setup["station"]
     registration = scoring_setup["registrations"][0]
     operator = scoring_setup["operator"]
@@ -283,7 +284,7 @@ def test_score_corrections_require_a_nonblank_reason():
         ScoreAnnulment(reason="  ")
 
 
-def test_score_history_is_organizer_only(db_session, scoring_setup):
+def test_score_history_is_system_admin_only(db_session, scoring_setup):
     with pytest.raises(HTTPException) as error:
         list_event_scores(
             scoring_setup["event"].id,
@@ -294,7 +295,7 @@ def test_score_history_is_organizer_only(db_session, scoring_setup):
     assert error.value.status_code == 403
 
 
-def test_organizer_can_annul_score_and_audit_reason(
+def test_system_admin_can_annul_score_and_audit_reason(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
@@ -329,7 +330,7 @@ def test_organizer_can_annul_score_and_audit_reason(
     assert lookup["score"]["is_annulled"] is True
 
 
-def test_only_organizer_can_annul_score_and_duplicate_annulment_is_rejected(
+def test_only_system_admin_can_annul_score_and_duplicate_annulment_is_rejected(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
@@ -354,7 +355,7 @@ def test_only_organizer_can_annul_score_and_duplicate_annulment_is_rejected(
     assert error.value.status_code == 409
 
 
-def test_organizer_can_read_event_score_history(
+def test_system_admin_can_read_event_score_history(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
@@ -385,7 +386,7 @@ def test_organizer_can_read_event_score_history(
     assert result[0]["station_name"] == "Main"
     assert result[0]["points"] == 6
     assert result[0]["history"][0]["reason"] == "Correction"
-    assert result[0]["history"][0]["changed_by"] == "Organizer"
+    assert result[0]["history"][0]["changed_by"] == "Admin"
 
 
 def test_public_leaderboard_includes_zero_scores_and_tied_places(
@@ -402,7 +403,10 @@ def test_public_leaderboard_includes_zero_scores_and_tied_places(
             db_session,
         )
 
-    result = read_public_leaderboard(scoring_setup["event"].id, db_session)
+    result = read_public_leaderboard(
+        scoring_setup["event"].id,
+        session=db_session,
+    )
     participants = result["participants"]
 
     assert [row["registration_number"] for row in participants] == [
@@ -414,8 +418,14 @@ def test_public_leaderboard_includes_zero_scores_and_tied_places(
     assert [row["total_points"] for row in participants] == [6, 6, 0]
     assert [row["stations_completed"] for row in participants] == [1, 1, 0]
     assert all(row["stations_total"] == 2 for row in participants)
-    assert participants[0]["first_name"] == "Ada"
-    assert participants[0]["last_name"] == "One"
+    assert set(participants[0]) == {
+        "registration_number",
+        "place",
+        "total_points",
+        "stations_completed",
+        "stations_total",
+        "stations",
+    }
     assert participants[0]["stations"] == [
         {"station_id": station.id, "name": "Main", "points": 6, "score_max": 10},
         {
@@ -449,7 +459,10 @@ def test_annulled_score_is_excluded_from_public_leaderboard(
         db_session,
     )
 
-    result = read_public_leaderboard(scoring_setup["event"].id, db_session)
+    result = read_public_leaderboard(
+        scoring_setup["event"].id,
+        session=db_session,
+    )
     first = result["participants"][0]
     assert first["registration_number"] == "000001"
     assert first["total_points"] == 0
@@ -457,8 +470,63 @@ def test_annulled_score_is_excluded_from_public_leaderboard(
     assert first["stations"][0]["points"] is None
 
 
+def test_public_leaderboard_supports_route_sheet_and_counts_off_route_scores(
+    db_session, scoring_setup
+):
+    event_record = scoring_setup["event"]
+    route_sheet = RouteSheet(event_id=event_record.id, name="North")
+    db_session.add(route_sheet)
+    db_session.flush()
+    db_session.add(
+        RouteSheetStation(
+            route_sheet_id=route_sheet.id,
+            event_id=event_record.id,
+            station_id=scoring_setup["another_station"].id,
+        )
+    )
+    registration = scoring_setup["registrations"][0]
+    registration.route_sheet_id = route_sheet.id
+    db_session.flush()
+    create_score(
+        scoring_setup["station"].id,
+        ScoreCreate(event_participant_id=registration.id, points=6),
+        scoring_setup["operator"],
+        db_session,
+    )
+
+    route_result = read_public_leaderboard(
+        event_record.id,
+        route_sheet_id=route_sheet.id,
+        session=db_session,
+    )
+    all_result = read_public_leaderboard(event_record.id, session=db_session)
+
+    assert [row["registration_number"] for row in route_result["participants"]] == ["000001"]
+    assert route_result["participants"][0]["total_points"] == 6
+    assert [row["registration_number"] for row in all_result["participants"]] == [
+        "000001",
+        "000002",
+        "000003",
+    ]
+    assert all_result["participants"][0]["total_points"] == 6
+    public_event = next(
+        item for item in list_public_events(db_session) if item["id"] == event_record.id
+    )
+    assert public_event["route_sheets"] == [
+        {"id": route_sheet.id, "name": "North"}
+    ]
+
+    with pytest.raises(HTTPException) as error:
+        read_public_leaderboard(
+            scoring_setup["other_event"].id,
+            route_sheet_id=route_sheet.id,
+            session=db_session,
+        )
+    assert error.value.status_code == 404
+
+
 def test_public_leaderboard_returns_not_found_for_unknown_event(db_session):
     with pytest.raises(HTTPException) as error:
-        read_public_leaderboard(999, db_session)
+        read_public_leaderboard(999, session=db_session)
 
     assert error.value.status_code == 404

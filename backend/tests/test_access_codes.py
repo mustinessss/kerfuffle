@@ -1,6 +1,4 @@
 from datetime import date
-import hashlib
-import hmac
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -14,24 +12,18 @@ from app.api.v1.access_codes import (
     create_access_code,
     get_access_session,
     list_access_codes,
-    list_route_sheets_with_access_code,
-    register_with_access_code,
     revoke_access_code,
     submit_score_with_access_code,
     verify_access_code,
 )
-from app.api.v1.participants import ParticipantCreate, PersonCreate
 from app.api.v1.scores import ScoreCreate
 from app.core.config import Settings
 from app.db.models import (
     AccessCode,
     AccessSession,
     Event,
-    EventAccess,
     EventParticipant,
     Person,
-    RouteSheet,
-    RouteSheetStation,
     Score,
     Station,
     User,
@@ -57,7 +49,11 @@ def db_session():
 
 @pytest.fixture
 def access_setup(db_session):
-    organizer = User(legacy_identity_subject="organizer", display_name="Organizer")
+    organizer = User(
+        legacy_identity_subject="admin",
+        display_name="Admin",
+        is_system_admin=True,
+    )
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 12))
     db_session.add_all([organizer, event_record])
     db_session.flush()
@@ -70,13 +66,6 @@ def access_setup(db_session):
     )
     db_session.add(station)
     db_session.flush()
-    db_session.add(
-        EventAccess(
-            user_id=organizer.id,
-            event_id=event_record.id,
-            role="organizer",
-        )
-    )
     db_session.commit()
     return {"organizer": organizer, "event": event_record, "station": station}
 
@@ -105,10 +94,12 @@ def request():
 def issue_code(
     db_session,
     access_setup,
-    role="registrar",
+    role="station_operator",
     station_id=None,
     code="REGA2TR8",
 ):
+    if role == "station_operator" and station_id is None:
+        station_id = access_setup["station"].id
     return create_access_code(
         access_setup["event"].id,
         AccessCodeCreate(
@@ -139,7 +130,7 @@ def session_for(db_session, access_token):
     )
 
 
-def test_codes_are_hashed_listed_without_secret_and_disabled_by_organizer(
+def test_codes_are_hashed_listed_without_secret_and_disabled_by_admin(
     db_session, access_setup
 ):
     created = issue_code(db_session, access_setup)
@@ -147,7 +138,7 @@ def test_codes_are_hashed_listed_without_secret_and_disabled_by_organizer(
     stored = db_session.get(AccessCode, created["id"])
     assert created["code"]
     assert stored.secret_hash != created["code"]
-    assert stored.label == "Код регистратора"
+    assert stored.label == "Код площадки"
     assert created["code"] == "REGA2TR8"
     assert created["is_active"] is True
     assert list_access_codes(
@@ -165,94 +156,27 @@ def test_codes_are_hashed_listed_without_secret_and_disabled_by_organizer(
     assert error.value.status_code == 400
 
 
-def test_registration_code_registers_in_its_event(
-    db_session, access_setup
-):
-    code = issue_code(db_session, access_setup)
-    grant = verify(db_session, code["code"])
-    result = register_with_access_code(
-        ParticipantCreate(
-            person=PersonCreate(first_name="Ada", last_name="Lovelace")
-        ),
-        session_for(db_session, grant["access_token"]),
-        db_session,
-    )
-
-    assert result["event_id"] == access_setup["event"].id
-    assert result["registration_number"] == "000001"
-
-
-def test_registration_code_lists_route_sheets_for_selection(db_session, access_setup):
-    sheet = RouteSheet(
-        event_id=access_setup["event"].id,
-        name="North route",
-        capacity=3,
-    )
-    db_session.add(sheet)
-    db_session.flush()
-    db_session.add(
-        RouteSheetStation(
-            route_sheet_id=sheet.id,
-            event_id=sheet.event_id,
-            station_id=access_setup["station"].id,
-        )
-    )
-    db_session.commit()
-    code = issue_code(db_session, access_setup)
-    grant = verify(db_session, code["code"])
-
-    route_sheets = list_route_sheets_with_access_code(
-        session_for(db_session, grant["access_token"]),
-        db_session,
-    )
-
-    assert route_sheets[0]["name"] == "North route"
-    assert route_sheets[0]["capacity"] == 3
-    assert route_sheets[0]["registered_count"] == 0
-
-
 def test_access_code_is_case_insensitive_and_cannot_be_reused(
     db_session, access_setup
 ):
     created = issue_code(db_session, access_setup)
 
     grant = verify(db_session, created["code"].lower())
-    assert grant["role"] == "registrar"
+    assert grant["role"] == "station_operator"
 
     with pytest.raises(HTTPException) as error:
         issue_code(db_session, access_setup, code=created["code"].lower())
     assert error.value.status_code == 409
 
 
-def test_legacy_long_codes_remain_usable_after_short_code_change(
-    db_session, access_setup
-):
-    legacy_code = "legacy_code-token-1234567890"
-    secret_hash = hmac.new(
-        settings().access_code_hash_secret.encode(),
-        legacy_code.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    db_session.add(
-        AccessCode(
-            event_id=access_setup["event"].id,
-            created_by_user_id=access_setup["organizer"].id,
-            role="registrar",
-            label="Legacy registration",
-            secret_hash=secret_hash,
-        )
-    )
-    db_session.commit()
-
-    grant = verify(db_session, legacy_code)
-
-    assert grant["role"] == "registrar"
-
-
 @pytest.mark.parametrize("value", ["SHORT", "REGISTA0", "REGISTA1", "REGISTI8", "REGISTO8"])
 def test_codes_must_use_the_short_unambiguous_format(value):
     with pytest.raises(ValidationError):
-        AccessCodeCreate(role="registrar", code=value)
+        AccessCodeCreate(
+            role="station_operator",
+            station_id=1,
+            code=value,
+        )
 
 
 def test_station_code_is_already_scoped_and_checks_server_score_scale(
@@ -268,12 +192,7 @@ def test_station_code_is_already_scoped_and_checks_server_score_scale(
     )
     db_session.add(registration)
     db_session.commit()
-    code = issue_code(
-        db_session,
-        access_setup,
-        role="station_operator",
-        station_id=access_setup["station"].id,
-    )
+    code = issue_code(db_session, access_setup)
     grant = verify(db_session, code["code"])
     session = session_for(db_session, grant["access_token"])
 
@@ -306,7 +225,7 @@ def test_revoking_code_invalidates_existing_sessions(db_session, access_setup):
     assert db_session.query(AccessSession).count() == 1
 
 
-def test_code_creation_requires_organizer_and_matching_station(
+def test_code_creation_requires_system_admin_and_matching_station(
     db_session, access_setup
 ):
     another_user = User(legacy_identity_subject="other", display_name="Other")
@@ -316,7 +235,11 @@ def test_code_creation_requires_organizer_and_matching_station(
     with pytest.raises(HTTPException) as error:
         create_access_code(
             access_setup["event"].id,
-                AccessCodeCreate(role="registrar", code="REGA2TR8"),
+            AccessCodeCreate(
+                role="station_operator",
+                station_id=access_setup["station"].id,
+                code="REGA2TR8",
+            ),
             another_user,
             db_session,
             settings(),

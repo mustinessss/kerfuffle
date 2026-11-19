@@ -22,7 +22,7 @@ def test_all_design_document_tables_have_models():
         "access_sessions",
         "access_code_attempts",
         "user_sessions",
-        "organizer_invitations",
+        "account_invitations",
         "password_reset_tokens",
         "auth_attempts",
     }
@@ -40,6 +40,9 @@ def test_registration_and_score_constraints_are_present():
     assert "one_score_per_participant_station" in {
         constraint.name for constraint in scores.constraints
     }
+    assert "event_participants_registration_number_format" in {
+        constraint.name for constraint in registrations.constraints
+    }
     assert "stations_valid_score_scale" in {
         constraint.name for constraint in stations.constraints
     }
@@ -56,6 +59,9 @@ def test_station_operator_access_is_unique_per_station():
         indexes["event_access_operator_station_unique"]
         .dialect_options["postgresql"]["where"]
     ) == "role = 'station_operator'"
+    assert "organizer" not in str(
+        models.EventAccess.__table__.constraints
+    )
 
 
 def test_postgresql_primary_keys_use_identity_columns():

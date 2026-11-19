@@ -7,7 +7,15 @@ from sqlalchemy.orm import Session
 from app.db.models import EventAccess, Station, User
 
 
-EVENT_ROLES = frozenset({"organizer", "registrar", "station_operator"})
+EVENT_ROLES = frozenset({"station_operator"})
+
+
+def require_system_admin(user: User) -> None:
+    if not user.is_system_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System administrator role required",
+        )
 
 
 def require_event_access(
@@ -25,7 +33,7 @@ def require_event_access(
             EventAccess(
                 user_id=user.id,
                 event_id=event_id,
-                role="organizer",
+                role="system_admin",
                 station_id=None,
             )
         ]
@@ -68,7 +76,7 @@ def require_station_access(
         return EventAccess(
             user_id=user.id,
             event_id=station.event_id,
-            role="organizer",
+            role="system_admin",
             station_id=None,
         )
 

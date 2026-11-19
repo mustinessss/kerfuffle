@@ -52,7 +52,6 @@ def account_response(user: User, session: Session) -> dict:
         "email": user.email,
         "display_name": user.display_name,
         "is_system_admin": user.is_system_admin,
-        "is_organizer": user.is_organizer,
         "access": [
             {
                 "event_id": access.event_id,
@@ -60,6 +59,7 @@ def account_response(user: User, session: Session) -> dict:
                 "station_id": access.station_id,
             }
             for access in accesses
+            if access.role == "station_operator"
         ],
     }
 

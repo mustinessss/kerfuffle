@@ -15,25 +15,24 @@ import {
   getEvents,
   getParticipants,
   getRouteSheets,
-  getRouteSheetsWithAccessCode,
   getEventScores,
-  inviteOrganizer,
+  inviteStaffAccount,
   getStations,
   lookupParticipant,
   lookupWithAccessCode,
   registerParticipant,
-  registerWithAccessCode,
   deleteRouteSheet,
   revokeAccessCode,
   submitScore,
   submitScoreWithAccessCode,
   updateStation,
+  updateRouteSheet,
   verifyAccessCode,
 } from "./api";
 import type {
   AccessCodeSummary,
   CurrentAccount,
-  CreatedOrganizer,
+  CreatedInvitation,
   EventSummary,
   ParticipantLookup,
   RegisteredParticipant,
@@ -137,7 +136,7 @@ function WorkspaceHeading({ title, description }: { title: string; description: 
   );
 }
 
-export function OrganizerPage() {
+export function WorkspacePage() {
   const { user } = useAuth();
   const token = "";
   const [account, setAccount] = useState<CurrentAccount | null>(null);
@@ -153,9 +152,8 @@ export function OrganizerPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [participantQuery, setParticipantQuery] = useState("");
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
-  const selectedAccess = account?.access.filter((access) => access.event_id === selectedEventId) ?? [];
-  const canManage = selectedAccess.some((access) => access.role === "organizer");
-  const canRegister = canManage || selectedAccess.some((access) => access.role === "registrar");
+  const canManage = account?.is_system_admin === true;
+  const canRegister = canManage;
   const detailLoading = selectedEventId !== null && detailsEventId !== selectedEventId;
   const visibleStations = detailsEventId === selectedEventId ? stations : [];
   const visibleRouteSheets = detailsEventId === selectedEventId ? routeSheets : [];
@@ -257,7 +255,7 @@ export function OrganizerPage() {
   }
 
   return (
-    <AuthenticatedPage title="Кабинет организатора" description="Управляйте мероприятиями, площадками и регистрациями.">
+    <AuthenticatedPage title="Рабочее пространство" description="Управляйте мероприятиями, площадками и участниками.">
       {loading && <AuthLoading />}
       {!loading && error && <p className="form-error" role="alert">{error}</p>}
       {!loading && account && (
@@ -301,7 +299,7 @@ export function OrganizerPage() {
               </form>
             )}
           </section>
-          {account.is_system_admin && <OrganizerProvisioningPanel />}
+          {account.is_system_admin && <StaffAccountProvisioningPanel />}
           {actionMessage && <p className="success-message" role="status">{actionMessage}</p>}
           {selectedEvent && (
             <>
@@ -366,8 +364,8 @@ export function OrganizerPage() {
   );
 }
 
-function OrganizerProvisioningPanel() {
-  const [created, setCreated] = useState<CreatedOrganizer | null>(null);
+function StaffAccountProvisioningPanel() {
+  const [created, setCreated] = useState<CreatedInvitation | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -380,8 +378,8 @@ function OrganizerProvisioningPanel() {
     setCreated(null);
     try {
       const email = String(form.get("email") ?? "").trim();
-      const organizer = await inviteOrganizer(email);
-      setCreated(organizer);
+      const invitation = await inviteStaffAccount(email);
+      setCreated(invitation);
       formElement.reset();
     } catch (requestError) {
       setError(messageFor(requestError));
@@ -393,10 +391,10 @@ function OrganizerProvisioningPanel() {
   return (
     <section className="workspace-section">
       <div className="workspace-section-heading">
-        <div><p className="eyebrow">СИСТЕМНЫЙ ДОСТУП</p><h2>Приглашение организатора</h2></div>
+        <div><p className="eyebrow">УЧЁТНЫЕ ЗАПИСИ</p><h2>Приглашение держателя площадки</h2></div>
       </div>
       <form className="workspace-form event-create-form" onSubmit={(event) => void handleSubmit(event)}>
-        <label>Email организатора<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
+        <label>Email держателя площадки<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
         <button className="primary-button" disabled={saving}>{saving ? "Создаём приглашение…" : "Создать приглашение"}</button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -405,7 +403,7 @@ function OrganizerProvisioningPanel() {
           <strong>Приглашение создано для {created.email}</strong>
           {created.delivery_method === "email"
             ? <p>Приглашение отправлено по email. Ссылка действует 24 часа.</p>
-            : <div><p>Ссылка действует 24 часа. Передавайте её только организатору по доверенному каналу.</p>{created.invitation_url && <CopyLink url={created.invitation_url} />}</div>}
+            : <div><p>Ссылка действует 24 часа. Передавайте её по доверенному каналу.</p>{created.invitation_url && <CopyLink url={created.invitation_url} />}</div>}
           <button className="quiet-button" onClick={() => setCreated(null)}>Скрыть данные</button>
         </div>
       )}
@@ -424,7 +422,7 @@ function AccessCodesPanel({
 }) {
   const [codes, setCodes] = useState<AccessCodeSummary[]>([]);
   const [createdCode, setCreatedCode] = useState("");
-  const [role, setRole] = useState<AccessCodeSummary["role"]>("registrar");
+  const role: AccessCodeSummary["role"] = "station_operator";
   const [stationId, setStationId] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -446,7 +444,7 @@ function AccessCodesPanel({
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (role === "station_operator" && !stationId) {
+    if (!stationId) {
       setError("Выберите площадку для кода сотрудника.");
       return;
     }
@@ -457,7 +455,7 @@ function AccessCodesPanel({
       const created = await createAccessCode(eventId, accessToken, {
         role,
         code: code.trim().toUpperCase(),
-        station_id: role === "station_operator" ? Number(stationId) : null,
+        station_id: Number(stationId),
       });
       setCodes((current) => [created, ...current]);
       setCreatedCode(created.code ?? "");
@@ -494,20 +492,12 @@ function AccessCodesPanel({
       </div>
       <form className="workspace-form create-station-form" onSubmit={(event) => void handleCreate(event)}>
         <h3>Выпустить код</h3>
-        <label>Кому
-          <select value={role} onChange={(event) => setRole(event.target.value as AccessCodeSummary["role"])}>
-            <option value="registrar">Регистратору</option>
-            <option value="station_operator">Сотруднику площадки</option>
+        <label>Площадка
+          <select value={stationId} required onChange={(event) => setStationId(event.target.value)}>
+            <option value="">Выберите площадку</option>
+            {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
           </select>
         </label>
-        {role === "station_operator" && (
-          <label>Площадка
-            <select value={stationId} required onChange={(event) => setStationId(event.target.value)}>
-              <option value="">Выберите площадку</option>
-              {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-            </select>
-          </label>
-        )}
         <label>Подпись — она же код для входа
           <input
             value={code}
@@ -521,7 +511,7 @@ function AccessCodesPanel({
           />
         </label>
         <p className="access-code-hint">8–16 символов: латинские буквы и цифры 2–9. Буквы I/O и цифры 0/1 исключены, регистр не важен. Не используйте название мероприятия или площадки.</p>
-        <button className="primary-button" disabled={busy || code.length < 8 || (role === "station_operator" && stations.length === 0)}>{busy ? "Сохраняем…" : "Создать код"}</button>
+        <button className="primary-button" disabled={busy || code.length < 8 || stations.length === 0}>{busy ? "Сохраняем…" : "Создать код"}</button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
       {createdCode && (
@@ -537,7 +527,7 @@ function AccessCodesPanel({
           <article className="workspace-card access-code-row" key={code.id}>
             <div>
               <strong>{code.label}</strong>
-              <span>{code.role === "registrar" ? "Регистратор" : `Площадка: ${code.station_name ?? "не указана"}`}</span>
+              <span>Площадка: {code.station_name ?? "не указана"}</span>
               <small>{code.is_active ? "Активен" : "Отключён"}</small>
             </div>
             {code.is_active && <button className="quiet-button" disabled={busy} onClick={() => void handleRevoke(code.id)}>Отключить</button>}
@@ -819,7 +809,9 @@ function RegisterParticipantForm({
       const participant = await registerParticipant(eventId, accessToken, {
         first_name: String(form.get("firstName") ?? "").trim(),
         last_name: String(form.get("lastName") ?? "").trim(),
-      }, Number(form.get("routeSheetId")) || null);
+        workplace_or_study: String(form.get("workplaceOrStudy") ?? "").trim(),
+        phone: String(form.get("phone") ?? "").trim(),
+      }, Number(form.get("routeSheetId")) || null, String(form.get("registrationNumber") ?? "").trim());
       setRegisteredNumber(participant.registration_number);
       formElement.reset();
       onRegistered();
@@ -834,6 +826,19 @@ function RegisterParticipantForm({
       <form className="workspace-form registration-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>Имя<input name="firstName" required maxLength={100} /></label>
         <label>Фамилия<input name="lastName" required maxLength={100} /></label>
+        <label>Номер участника
+          <input
+            name="registrationNumber"
+            inputMode="numeric"
+            required
+            minLength={6}
+            maxLength={6}
+            pattern="[0-9]{6}"
+            placeholder="000001"
+          />
+        </label>
+        <label>Место работы/учёбы<input name="workplaceOrStudy" maxLength={300} /></label>
+        <label>Номер телефона<input name="phone" type="tel" maxLength={50} autoComplete="tel" /></label>
         {routeSheets.length > 0 && (
           <label>Маршрутный лист
             <select name="routeSheetId" required defaultValue="">
@@ -874,31 +879,7 @@ function RouteSheetsPanel({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const stationIds = form.getAll("stationIds").map(Number);
-    setSaving(true);
-    setError("");
-    try {
-      await createRouteSheet(eventId, accessToken, {
-        name: String(form.get("routeName") ?? "").trim(),
-        capacity: String(form.get("capacity") ?? "").trim()
-          ? Number(form.get("capacity"))
-          : null,
-        station_ids: stationIds,
-      });
-      formElement.reset();
-      onChanged();
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
+  const [editingSheetId, setEditingSheetId] = useState<number | null>(null);
   async function handleDelete(routeSheetId: number) {
     setSaving(true);
     setError("");
@@ -917,163 +898,230 @@ function RouteSheetsPanel({
       <h3>Маршрутные листы</h3>
       <p className="backend-gap-note">Выберите набор площадок и при необходимости ограничьте число участников.</p>
       {routeSheets.map((sheet) => (
-        <div className="route-sheet-row" key={sheet.id}>
-          <strong>{sheet.name}</strong>
-          <span>
-            {sheet.stations.map((station) => station.name).join(", ")}
-          </span>
-          <span>
-            {sheet.capacity === null
-              ? `${sheet.registered_count} участников · без лимита`
-              : `${sheet.registered_count}/${sheet.capacity} участников`}
-          </span>
-          <button
-            className="quiet-button"
-            disabled={saving || sheet.registered_count > 0}
-            onClick={() => void handleDelete(sheet.id)}
-            title={sheet.registered_count > 0 ? "Нельзя удалить назначенный участникам маршрут" : undefined}
-          >
-            Удалить
-          </button>
+        <div key={sheet.id}>
+          <div className="route-sheet-row">
+            <strong>{sheet.name}</strong>
+            <span>{sheet.stations.map((station) => station.name).join(", ")}</span>
+            <span>
+              {sheet.capacity === null
+                ? `${sheet.registered_count} участников · без лимита`
+                : `${sheet.registered_count}/${sheet.capacity} участников`}
+            </span>
+            <div className="form-actions">
+              <button
+                className="quiet-button"
+                disabled={saving}
+                onClick={() => setEditingSheetId((current) => current === sheet.id ? null : sheet.id)}
+              >
+                {editingSheetId === sheet.id ? "Закрыть" : "Изменить"}
+              </button>
+              <button
+                className="quiet-button"
+                disabled={saving || sheet.registered_count > 0}
+                onClick={() => void handleDelete(sheet.id)}
+                title={sheet.registered_count > 0 ? "Нельзя удалить назначенный участникам маршрут" : undefined}
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+          {editingSheetId === sheet.id && (
+            <RouteSheetForm
+              key={sheet.id}
+              eventId={eventId}
+              accessToken={accessToken}
+              stations={stations}
+              routeSheet={sheet}
+              saving={saving}
+              onSaving={setSaving}
+              onError={setError}
+              onSaved={() => {
+                setEditingSheetId(null);
+                onChanged();
+              }}
+            />
+          )}
         </div>
       ))}
-      <form className="workspace-form route-sheet-create-form" onSubmit={(event) => void handleCreate(event)}>
-        <label>Название маршрутного листа<input name="routeName" required maxLength={100} /></label>
-        <label>Вместимость (необязательно)<input name="capacity" type="number" min="1" step="1" /></label>
-        <label>Площадки
-          <select name="stationIds" multiple required size={Math.min(Math.max(stations.length, 2), 5)}>
-            {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-          </select>
-        </label>
-        <button className="primary-button" disabled={saving || stations.length === 0}>
-          {saving ? "Сохраняем…" : "Создать маршрутный лист"}
-        </button>
-      </form>
+      <RouteSheetForm
+        eventId={eventId}
+        accessToken={accessToken}
+        stations={stations}
+        saving={saving}
+        onSaving={setSaving}
+        onError={setError}
+        onSaved={onChanged}
+      />
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>
   );
 }
 
-export function RegistrationPage() {
-  const [code, setCode] = useState("");
-  const [access, setAccess] = useState<VerifiedAccess | null>(null);
-  const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
-  const [registeredNumber, setRegisteredNumber] = useState("");
-  const [registeredRouteSheet, setRegisteredRouteSheet] = useState("");
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState("");
+function RouteSheetForm({
+  eventId,
+  accessToken,
+  stations,
+  routeSheet,
+  saving,
+  onSaving,
+  onError,
+  onSaved,
+}: {
+  eventId: number;
+  accessToken: string;
+  stations: StationSummary[];
+  routeSheet?: RouteSheetSummary;
+  saving: boolean;
+  onSaving: (value: boolean) => void;
+  onError: (message: string) => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(routeSheet?.name ?? "");
+  const [capacity, setCapacity] = useState(routeSheet?.capacity?.toString() ?? "");
+  const [selectedStationIds, setSelectedStationIds] = useState<number[]>(
+    routeSheet?.stations.map((station) => station.id) ?? [],
+  );
 
-  async function handleVerify(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorking(true);
-    setError("");
-    try {
-      const verified = await verifyAccessCode(code.trim());
-      if (verified.role !== "registrar") {
-        setError("Этот код не предназначен для регистрации участников.");
-        return;
-      }
-      const availableRouteSheets = await getRouteSheetsWithAccessCode(
-        verified.access_token,
-      );
-      setRouteSheets(availableRouteSheets);
-      setAccess(verified);
-      setCode("");
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setWorking(false);
-    }
+  function setAllStations(checked: boolean) {
+    setSelectedStationIds(checked ? stations.map((station) => station.id) : []);
   }
 
-  async function handleRegister(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!access) return;
-    const formElement = event.currentTarget;
-    const formData = new FormData(formElement);
-    const selectedRouteSheetId = Number(formData.get("routeSheetId")) || null;
-    setWorking(true);
-    setError("");
+    onSaving(true);
+    onError("");
+    const payload = {
+      name: name.trim(),
+      capacity: capacity.trim() ? Number(capacity) : null,
+      station_ids: selectedStationIds,
+    };
     try {
-      const participant = await registerWithAccessCode(access.access_token, {
-        first_name: String(formData.get("firstName") ?? "").trim(),
-        last_name: String(formData.get("lastName") ?? "").trim(),
-      }, selectedRouteSheetId);
-      setRegisteredNumber(participant.registration_number);
-      setRegisteredRouteSheet(participant.route_sheet_name ?? "");
-      if (selectedRouteSheetId !== null) {
-        setRouteSheets((current) => current.map((sheet) => (
-          sheet.id === selectedRouteSheetId
-            ? { ...sheet, registered_count: sheet.registered_count + 1 }
-            : sheet
-        )));
+      if (routeSheet) {
+        await updateRouteSheet(routeSheet.id, accessToken, payload);
+      } else {
+        await createRouteSheet(eventId, accessToken, payload);
       }
-      formElement.reset();
+      onSaved();
     } catch (requestError) {
-      setError(messageFor(requestError));
+      onError(messageFor(requestError));
     } finally {
-      setWorking(false);
+      onSaving(false);
     }
   }
 
   return (
-    <main className="workspace-page">
-      <WorkspaceHeading title="Регистрация участника" description="Введите код, полученный у организатора, и заполните имя участника." />
-      {!access ? (
-        <form className="workspace-card access-entry-form" onSubmit={(event) => void handleVerify(event)}>
-          <label htmlFor="registration-access-code">Код регистрации</label>
-          <input id="registration-access-code" value={code} onChange={(event) => setCode(event.target.value)} required minLength={8} maxLength={128} autoComplete="off" />
-          <button className="primary-button" disabled={working}>{working ? "Проверяем…" : "Продолжить"}</button>
-        </form>
-      ) : (
+    <form className="workspace-form route-sheet-create-form" onSubmit={(event) => void handleSubmit(event)}>
+      <h4>{routeSheet ? "Изменить маршрутный лист" : "Создать маршрутный лист"}</h4>
+      <label>Название маршрутного листа<input value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></label>
+      <label>Вместимость (необязательно)<input value={capacity} onChange={(event) => setCapacity(event.target.value)} type="number" min="1" step="1" /></label>
+      <fieldset className="station-checkbox-fieldset">
+        <legend>Площадки · выбрано {selectedStationIds.length}</legend>
+        <div className="station-checkbox-actions">
+          <button type="button" className="quiet-button" onClick={() => setAllStations(true)}>Выбрать все</button>
+          <button type="button" className="quiet-button" onClick={() => setAllStations(false)}>Снять все</button>
+        </div>
+        <div className="station-checkbox-list">
+          {stations.map((station) => (
+            <label key={station.id}>
+              <input
+                type="checkbox"
+                checked={selectedStationIds.includes(station.id)}
+                onChange={(event) => setSelectedStationIds((current) => (
+                  event.target.checked
+                    ? [...current, station.id]
+                    : current.filter((id) => id !== station.id)
+                ))}
+              />
+              {station.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <button className="primary-button" disabled={saving || stations.length === 0 || selectedStationIds.length === 0}>
+        {saving ? "Сохраняем…" : routeSheet ? "Сохранить маршрутный лист" : "Создать маршрутный лист"}
+      </button>
+    </form>
+  );
+}
+
+export function RegistrationPage() {
+  const { user } = useAuth();
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
+  const [loadedEventId, setLoadedEventId] = useState<number | null>(null);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
+  const [error, setError] = useState("");
+  const [routeSheetRefresh, setRouteSheetRefresh] = useState(0);
+  useEffect(() => {
+    if (!user?.is_system_admin) return;
+    const controller = new AbortController();
+    getEvents("", controller.signal)
+      .then((result) => {
+        setEvents(result);
+        setSelectedEventId(result[0]?.id ?? null);
+      })
+      .catch((requestError: unknown) => {
+        if (!controller.signal.aborted) setError(messageFor(requestError));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEventsLoaded(true);
+      });
+    return () => controller.abort();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user?.is_system_admin || selectedEventId === null) return;
+    const controller = new AbortController();
+    getRouteSheets(selectedEventId, "", controller.signal)
+      .then((result) => {
+        setRouteSheets(result);
+        setLoadedEventId(selectedEventId);
+      })
+      .catch((requestError: unknown) => {
+        if (!controller.signal.aborted) {
+          setRouteSheets([]);
+          setLoadedEventId(selectedEventId);
+          setError(messageFor(requestError));
+        }
+      });
+    return () => controller.abort();
+  }, [routeSheetRefresh, selectedEventId, user]);
+
+  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const visibleRouteSheets = loadedEventId === selectedEventId ? routeSheets : [];
+  const loading = Boolean(user?.is_system_admin) && !eventsLoaded;
+
+  return (
+    <AuthenticatedPage title="Регистрация участника" description="Системный администратор регистрирует участников и задаёт их шестизначные номера.">
+      {loading && <AuthLoading />}
+      {user && !user.is_system_admin && <p className="form-error" role="alert">Регистрация доступна только системному администратору.</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      {!loading && user?.is_system_admin && (
         <>
-          <div className="workspace-card access-context">
-            <p className="eyebrow">ДОСТУП ПОДТВЕРЖДЁН</p>
-            <p>Регистрация участника мероприятия № {access.event_id}</p>
-            <button className="quiet-button" onClick={() => { setAccess(null); setRouteSheets([]); setRegisteredNumber(""); setRegisteredRouteSheet(""); }}>Ввести другой код</button>
-          </div>
-          {!registeredNumber ? (
-            <form className="workspace-card workspace-form registration-form access-registration-form" onSubmit={(event) => void handleRegister(event)}>
-              <label>Имя<input name="firstName" required maxLength={100} /></label>
-              <label>Фамилия<input name="lastName" required maxLength={100} /></label>
-              {routeSheets.length > 0 && !routeSheets.some(
-                (sheet) => sheet.capacity === null || sheet.registered_count < sheet.capacity,
-              ) && <p className="backend-gap-note">Свободных мест на маршрутных листах нет.</p>}
-              {routeSheets.length > 0 && (
-                <label>Маршрутный лист
-                  <select name="routeSheetId" required defaultValue="">
-                    <option value="" disabled>Выберите маршрут</option>
-                    {routeSheets.map((sheet) => (
-                      <option
-                        key={sheet.id}
-                        value={sheet.id}
-                        disabled={sheet.capacity !== null && sheet.registered_count >= sheet.capacity}
-                      >
-                        {sheet.name}{sheet.capacity === null ? "" : ` (${sheet.registered_count}/${sheet.capacity})`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <button className="primary-button" disabled={working || (
-                routeSheets.length > 0 && !routeSheets.some(
-                  (sheet) => sheet.capacity === null || sheet.registered_count < sheet.capacity,
-                )
-              )}>{working ? "Регистрируем…" : "Зарегистрировать"}</button>
-            </form>
-          ) : (
-            <div className="workspace-card registration-result" role="status">
-              <span>Ваш номер участника</span>
-              <strong>{registeredNumber}</strong>
-              {registeredRouteSheet && <p>Маршрутный лист: {registeredRouteSheet}</p>}
-              <p>Сохраните номер — он понадобится для начисления баллов.</p>
-              <button className="primary-button" onClick={() => { setRegisteredNumber(""); setRegisteredRouteSheet(""); }}>Зарегистрировать следующего участника</button>
-            </div>
+          {selectedEvent && (
+            <label className="event-select-label">Мероприятие
+              <select value={selectedEventId ?? ""} onChange={(event) => {
+                setSelectedEventId(Number(event.target.value));
+                setError("");
+              }}>
+                {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
           )}
+          {selectedEvent && loadedEventId === selectedEvent.id && (
+            <RegisterParticipantForm
+              eventId={selectedEvent.id}
+              accessToken=""
+              routeSheets={visibleRouteSheets}
+              onRegistered={() => setRouteSheetRefresh((value) => value + 1)}
+              onError={setError}
+            />
+          )}
+          {!selectedEvent && <p className="empty-workspace">Сначала создайте мероприятие.</p>}
         </>
       )}
-      {error && <p className="form-error" role="alert">{error}</p>}
-    </main>
+    </AuthenticatedPage>
   );
 }
 
@@ -1127,7 +1175,7 @@ function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void 
       setParticipant(result);
       if (result.already_scored && result.score) {
         setSuccess(result.score.is_annulled
-          ? "Результат аннулирован организатором. Повторное начисление запрещено."
+          ? "Результат аннулирован администратором. Повторное начисление запрещено."
           : `Участник уже прошёл эту площадку: ${result.score.points} баллов.`);
       }
     } catch (requestError) {
@@ -1172,7 +1220,7 @@ function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void 
 
   return (
     <main className="workspace-page">
-      <WorkspaceHeading title="Начисление баллов" description="Введите код площадки, выданный организатором. Площадка будет определена автоматически." />
+      <WorkspaceHeading title="Начисление баллов" description="Введите код доступа к площадке. Площадка будет определена автоматически." />
       {!access ? (
         <form className="workspace-card access-entry-form" onSubmit={(event) => void handleVerify(event)}>
           <label htmlFor="station-access-code">Код доступа площадки</label>
@@ -1211,7 +1259,7 @@ function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void 
                 {participant.already_scored ? (
                   <div className="already-scored-message" role="status">
                     {participant.score?.is_annulled
-                      ? "Результат аннулирован организатором. Повторное начисление запрещено."
+                      ? "Результат аннулирован администратором. Повторное начисление запрещено."
                       : <>Эта площадка уже пройдена. Ранее начислено <strong>{participant.score?.points ?? 0}</strong> баллов.</>}
                   </div>
                 ) : station && (
@@ -1234,7 +1282,7 @@ function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void 
         </>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="quiet-button staff-account-link" onClick={onUseAccountLogin}>Войти через учётную запись организации</button>
+      <button className="quiet-button staff-account-link" onClick={onUseAccountLogin}>Войти через учётную запись держателя площадки</button>
     </main>
   );
 }
@@ -1324,7 +1372,7 @@ function AccountScoringPage() {
       setParticipant(result);
       if (result.already_scored && result.score) {
         setSuccess(result.score.is_annulled
-          ? "Начисление аннулировано организатором. Повторно начислить баллы нельзя."
+          ? "Начисление аннулировано администратором. Повторно начислить баллы нельзя."
           : `Участник уже прошёл эту площадку: ${result.score.points} баллов.`);
       }
     } catch (requestError) {
@@ -1416,7 +1464,7 @@ function AccountScoringPage() {
                 {participant.already_scored ? (
                   <div className="already-scored-message" role="status">
                     {participant.score?.is_annulled
-                      ? "Результат аннулирован организатором. Повторное начисление на этой площадке запрещено."
+                      ? "Результат аннулирован администратором. Повторное начисление на этой площадке запрещено."
                       : <>Эта площадка уже пройдена. Ранее начислено <strong>{participant.score?.points ?? 0}</strong> баллов.</>}
                   </div>
                 ) : (
@@ -1437,7 +1485,7 @@ function AccountScoringPage() {
             )}
           </section>
         )}
-        <p className="backend-gap-note">Доступ к площадке определяется коротким кодом, привязанным организатором. Повторное начисление и допустимая шкала проверяются сервером и базой данных.</p>
+        <p className="backend-gap-note">Доступ к площадке определяется коротким кодом, привязанным системным администратором. Повторное начисление и допустимая шкала проверяются сервером и базой данных.</p>
       </>
     </AuthenticatedPage>
   );

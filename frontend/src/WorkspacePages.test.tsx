@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
+  createRouteSheet,
   createEvent,
   getCurrentAccount,
   getEvents,
   getParticipants,
   getRouteSheets,
-  getRouteSheetsWithAccessCode,
   getStations,
-  registerWithAccessCode,
+  registerParticipant,
   verifyAccessCode,
 } from "./api";
 import { useAuth } from "./authContext";
-import { OrganizerPage, RegistrationPage, ScoringPage } from "./WorkspacePages";
+import { RegistrationPage, ScoringPage, WorkspacePage } from "./WorkspacePages";
 
 vi.mock("./authContext", () => ({
   useAuth: vi.fn(),
@@ -23,13 +23,13 @@ vi.mock("./api", async (importOriginal) => {
   return {
     ...actual,
     createEvent: vi.fn(),
+    createRouteSheet: vi.fn(),
     getCurrentAccount: vi.fn(),
     getEvents: vi.fn(),
     getParticipants: vi.fn(),
     getRouteSheets: vi.fn(),
-    getRouteSheetsWithAccessCode: vi.fn(),
     getStations: vi.fn(),
-    registerWithAccessCode: vi.fn(),
+    registerParticipant: vi.fn(),
     verifyAccessCode: vi.fn(),
   };
 });
@@ -39,7 +39,6 @@ const admin = {
   email: "admin@example.test",
   display_name: "Admin",
   is_system_admin: true,
-  is_organizer: true,
   access: [],
 };
 
@@ -59,13 +58,13 @@ const station = {
 };
 
 const mockCreateEvent = vi.mocked(createEvent);
+const mockCreateRouteSheet = vi.mocked(createRouteSheet);
 const mockGetCurrentAccount = vi.mocked(getCurrentAccount);
 const mockGetEvents = vi.mocked(getEvents);
 const mockGetParticipants = vi.mocked(getParticipants);
 const mockGetRouteSheets = vi.mocked(getRouteSheets);
-const mockGetRouteSheetsWithAccessCode = vi.mocked(getRouteSheetsWithAccessCode);
 const mockGetStations = vi.mocked(getStations);
-const mockRegisterWithAccessCode = vi.mocked(registerWithAccessCode);
+const mockRegisterParticipant = vi.mocked(registerParticipant);
 const mockVerifyAccessCode = vi.mocked(verifyAccessCode);
 const mockUseAuth = vi.mocked(useAuth);
 
@@ -85,18 +84,25 @@ beforeEach(() => {
   mockGetEvents.mockResolvedValue([]);
   mockGetParticipants.mockResolvedValue([]);
   mockGetRouteSheets.mockResolvedValue([]);
-  mockGetRouteSheetsWithAccessCode.mockResolvedValue([]);
   mockGetStations.mockResolvedValue([]);
   mockCreateEvent.mockResolvedValue(event);
+  mockCreateRouteSheet.mockResolvedValue({
+    id: 31,
+    event_id: event.id,
+    name: "North route",
+    capacity: null,
+    registered_count: 0,
+    stations: [{ id: station.id, name: station.name }],
+  });
   mockVerifyAccessCode.mockResolvedValue({
-    access_token: "registrar-token",
+    access_token: "station-holder-token",
     token_type: "bearer",
     expires_at: "2026-11-18T12:00:00+00:00",
-    role: "registrar",
+    role: "station_operator",
     event_id: event.id,
     station: null,
   });
-  mockRegisterWithAccessCode.mockResolvedValue({
+  mockRegisterParticipant.mockResolvedValue({
     id: 41,
     event_id: event.id,
     person_id: 42,
@@ -109,9 +115,9 @@ beforeEach(() => {
   });
 });
 
-describe("OrganizerPage", () => {
+describe("WorkspacePage", () => {
   it("creates an event using the cookie-authenticated API", async () => {
-    render(<OrganizerPage />);
+    render(<WorkspacePage />);
     await screen.findByRole("heading", { name: /Новое мероприятие/ });
 
     fireEvent.change(screen.getByLabelText("Название"), {
@@ -143,10 +149,39 @@ describe("OrganizerPage", () => {
       clearError: vi.fn(),
     });
 
-    render(<OrganizerPage />);
+    render(<WorkspacePage />);
 
     expect(screen.queryByRole("button", { name: "Создать мероприятие" })).toBeNull();
     expect(mockCreateEvent).not.toHaveBeenCalled();
+  });
+
+  it("selects only checked stations when creating a route sheet", async () => {
+    const secondStation = { ...station, id: 24, name: "Side stage" };
+    mockGetEvents.mockResolvedValue([event]);
+    mockGetStations.mockResolvedValue([station, secondStation]);
+
+    render(<WorkspacePage />);
+    await screen.findByRole("checkbox", { name: "Main stage" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать все" }));
+    expect(screen.getByText("Площадки · выбрано 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Снять все" }));
+    expect(screen.getByText("Площадки · выбрано 0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Side stage" }));
+    fireEvent.change(screen.getByLabelText("Название маршрутного листа"), {
+      target: { value: "Only side" },
+    });
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Создать маршрутный лист" }).closest("form")!,
+    );
+
+    await waitFor(() => {
+      expect(mockCreateRouteSheet).toHaveBeenCalledWith(event.id, "", {
+        name: "Only side",
+        capacity: null,
+        station_ids: [secondStation.id],
+      });
+    });
   });
 });
 
@@ -157,7 +192,7 @@ it("loads assigned stations in account-based scoring without a bearer token", as
   render(<ScoringPage />);
   fireEvent.click(
     screen.getByRole("button", {
-      name: "Войти через учётную запись организации",
+      name: "Войти через учётную запись держателя площадки",
     }),
   );
 
@@ -169,7 +204,7 @@ it("loads assigned stations in account-based scoring without a bearer token", as
   );
 });
 
-it("assigns the route sheet selected by a registrar during registration", async () => {
+it("registers a participant with a manual six-digit number and personal fields", async () => {
   const routeSheet = {
     id: 31,
     event_id: event.id,
@@ -178,17 +213,16 @@ it("assigns the route sheet selected by a registrar during registration", async 
     registered_count: 0,
     stations: [{ id: station.id, name: station.name }],
   };
-  mockGetRouteSheetsWithAccessCode.mockResolvedValue([routeSheet]);
+  mockGetEvents.mockResolvedValue([event]);
+  mockGetRouteSheets.mockResolvedValue([routeSheet]);
 
   render(<RegistrationPage />);
-  fireEvent.change(screen.getByLabelText("Код регистрации"), {
-    target: { value: "REGISTRAR1" },
-  });
-  fireEvent.submit(screen.getByRole("button", { name: "Продолжить" }).closest("form")!);
-
-  expect(await screen.findByRole("option", { name: "North route (0/2)" })).toBeTruthy();
+  expect(await screen.findByRole("option", { name: /North route.*0\/2/ })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Имя"), { target: { value: "Alex" } });
   fireEvent.change(screen.getByLabelText("Фамилия"), { target: { value: "Example" } });
+  fireEvent.change(screen.getByLabelText("Номер участника"), { target: { value: "482019" } });
+  fireEvent.change(screen.getByLabelText("Место работы/учёбы"), { target: { value: "Example school" } });
+  fireEvent.change(screen.getByLabelText("Номер телефона"), { target: { value: "+70000000000" } });
   fireEvent.change(screen.getByLabelText("Маршрутный лист"), {
     target: { value: String(routeSheet.id) },
   });
@@ -197,11 +231,19 @@ it("assigns the route sheet selected by a registrar during registration", async 
   );
 
   await waitFor(() => {
-    expect(mockRegisterWithAccessCode).toHaveBeenCalledWith(
-      "registrar-token",
-      { first_name: "Alex", last_name: "Example" },
+    expect(mockRegisterParticipant).toHaveBeenCalledWith(
+      event.id,
+      "",
+      {
+        first_name: "Alex",
+        last_name: "Example",
+        workplace_or_study: "Example school",
+        phone: "+70000000000",
+      },
       routeSheet.id,
+      "482019",
     );
   });
-  expect(await screen.findByText("Маршрутный лист: North route")).toBeTruthy();
+  const status = await screen.findByRole("status");
+  expect(status.textContent).toContain("000001");
 });

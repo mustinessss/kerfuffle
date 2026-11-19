@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
-import { ApiError, getPublicLeaderboard, type LeaderboardResponse } from "./api";
+import { useEffect, useState } from "react";
+import {
+  ApiError,
+  getPublicEvents,
+  getPublicLeaderboard,
+  type LeaderboardResponse,
+  type PublicEventSummary,
+} from "./api";
 import { useAuth } from "./authContext";
-import { OrganizerPage, RegistrationPage, ScoringPage } from "./WorkspacePages";
+import { RegistrationPage, ScoringPage, WorkspacePage } from "./WorkspacePages";
 import {
   AdminUsersPage,
   ForgotPasswordPage,
@@ -12,14 +17,14 @@ import {
 } from "./AccountPages";
 import "./styles.css";
 
-type Page = "home" | "leaderboard" | "registration" | "scoring" | "organizer" | "login" | "accept-invitation" | "forgot-password" | "reset-password" | "admin-users";
+type Page = "home" | "leaderboard" | "registration" | "scoring" | "workspace" | "login" | "accept-invitation" | "forgot-password" | "reset-password" | "admin-users";
 
 function currentPage(): Page {
   const path = window.location.pathname.replace(/\/+$/, "");
   if (path === "/leaderboard") return "leaderboard";
   if (path === "/register") return "registration";
   if (path === "/score") return "scoring";
-  if (path === "/organizer") return "organizer";
+  if (path === "/workspace") return "workspace";
   if (path === "/login") return "login";
   if (path === "/accept-invitation") return "accept-invitation";
   if (path === "/forgot-password") return "forgot-password";
@@ -34,15 +39,7 @@ function eventIdFromUrl(): string {
 
 function App() {
   const page = currentPage();
-  const [eventId, setEventId] = useState(eventIdFromUrl);
   const { user } = useAuth();
-
-  function openLeaderboard(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const id = eventId.trim();
-    if (!/^[1-9]\d*$/.test(id)) return;
-    window.location.href = `/leaderboard?eventId=${encodeURIComponent(id)}`;
-  }
 
   return (
     <div className="app-shell">
@@ -54,7 +51,7 @@ function App() {
         <nav className="header-nav" aria-label="Основная навигация">
           <a href="/leaderboard">Рейтинг</a>
           {user?.is_system_admin && <a href="/admin/users">Пользователи</a>}
-          <a href={user ? "/organizer" : "/login"}>{user ? "Кабинет" : "Войти"} <span aria-hidden="true">↗</span></a>
+          <a href={user ? "/workspace" : "/login"}>{user ? "Кабинет" : "Войти"} <span aria-hidden="true">↗</span></a>
         </nav>
       </header>
 
@@ -80,30 +77,18 @@ function App() {
             <div className="action-card action-board">
               <span className="action-number">03</span>
               <span className="action-copy"><strong>Таблица участников</strong><small>Посмотрите текущий рейтинг события</small></span>
-              <form className="event-form" onSubmit={openLeaderboard}>
-                <label className="visually-hidden" htmlFor="event-id">Номер мероприятия</label>
-                <input
-                  id="event-id"
-                  inputMode="numeric"
-                  pattern="[1-9][0-9]*"
-                  required
-                  value={eventId}
-                  onChange={(event) => setEventId(event.target.value)}
-                  placeholder="ID события"
-                />
-                <button type="submit" aria-label="Открыть рейтинг">Открыть ↗</button>
-              </form>
+              <HomeLeaderboardPicker />
             </div>
           </section>
 
-          <p className="home-note">Нужен доступ сотрудника? <a href="/organizer">Кабинет организатора</a></p>
+          <p className="home-note">Нужен доступ сотрудника? <a href="/workspace">Рабочее пространство</a></p>
         </main>
       )}
 
-      {page === "leaderboard" && <LeaderboardPage eventId={eventId} onEventIdChange={setEventId} />}
+      {page === "leaderboard" && <LeaderboardPage />}
       {page === "registration" && <RegistrationPage />}
       {page === "scoring" && <ScoringPage />}
-      {page === "organizer" && <OrganizerPage />}
+      {page === "workspace" && <WorkspacePage />}
       {page === "login" && <LoginPage />}
       {page === "accept-invitation" && <InvitationPage />}
       {page === "forgot-password" && <ForgotPasswordPage />}
@@ -119,25 +104,98 @@ function App() {
   );
 }
 
-function LeaderboardPage({
-  eventId,
-  onEventIdChange,
-}: {
-  eventId: string;
-  onEventIdChange: (value: string) => void;
-}) {
+function HomeLeaderboardPicker() {
+  const [events, setEvents] = useState<PublicEventSummary[]>([]);
+  const [eventId, setEventId] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getPublicEvents(controller.signal)
+      .then((result) => {
+        setEvents(result);
+        setEventId(result[0] ? String(result[0].id) : "");
+      })
+      .catch((requestError: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(requestError instanceof ApiError
+            ? requestError.message
+            : "Не удалось загрузить список мероприятий.");
+        }
+      });
+    return () => controller.abort();
+  }, []);
+
+  return (
+    <form className="event-form" onSubmit={(event) => {
+      event.preventDefault();
+      if (eventId) window.location.href = `/leaderboard?eventId=${encodeURIComponent(eventId)}`;
+    }}>
+      <label className="visually-hidden" htmlFor="home-event">Мероприятие</label>
+      <select id="home-event" value={eventId} onChange={(event) => setEventId(event.target.value)} required>
+        <option value="" disabled>Выберите мероприятие</option>
+        {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <button type="submit" disabled={!eventId}>Открыть ↗</button>
+      {error && <span className="form-error" role="alert">{error}</span>}
+    </form>
+  );
+}
+
+function LeaderboardPage() {
   const [data, setData] = useState<LeaderboardResponse | null>(null);
+  const [events, setEvents] = useState<PublicEventSummary[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState(eventIdFromUrl());
+  const [selectedMode, setSelectedMode] = useState(
+    new URLSearchParams(window.location.search).get("routeSheetId") ?? "",
+  );
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [errorEventId, setErrorEventId] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [loadedEventId, setLoadedEventId] = useState("");
+  const [loadedQuery, setLoadedQuery] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
-  const validEventId = /^[1-9]\d*$/.test(eventId.trim());
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const currentEvent = events.find((item) => String(item.id) === selectedEventId) ?? null;
+  const selectedRouteSheetId = selectedMode ? Number(selectedMode) : undefined;
+  const queryKey = `${selectedEventId}:${selectedMode || "all"}`;
+  const validSelection = currentEvent !== null && (
+    selectedRouteSheetId === undefined
+    || currentEvent.route_sheets.some((sheet) => sheet.id === selectedRouteSheetId)
+  );
 
   useEffect(() => {
-    if (!validEventId) return;
+    const controller = new AbortController();
+    getPublicEvents(controller.signal)
+      .then((result) => {
+        setEvents(result);
+        const preferredEventId = eventIdFromUrl();
+        const activeEventId = result.some((item) => String(item.id) === preferredEventId)
+          ? preferredEventId
+          : String(result[0]?.id ?? "");
+        setSelectedEventId(activeEventId);
+        setSelectedMode((currentMode) => {
+          const event = result.find((item) => String(item.id) === activeEventId);
+          return event?.route_sheets.some((sheet) => String(sheet.id) === currentMode)
+            ? currentMode
+            : "";
+        });
+      })
+      .catch((requestError: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(requestError instanceof ApiError
+            ? requestError.message
+            : "Не удалось загрузить список мероприятий.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEventsLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!validSelection) return;
 
     let active = true;
     let controller: AbortController | undefined;
@@ -149,17 +207,19 @@ function LeaderboardPage({
       controller = new AbortController();
       if (initial) setLoading(true);
       try {
-        const result = await getPublicLeaderboard(Number(eventId), controller.signal);
+        const result = await getPublicLeaderboard(
+          Number(selectedEventId),
+          selectedRouteSheetId,
+          controller.signal,
+        );
         if (!active) return;
         hasSuccessfulResponse = true;
         setData(result);
-        setLoadedEventId(eventId.trim());
+        setLoadedQuery(queryKey);
         setError("");
-        setErrorEventId("");
         setLastUpdated(new Date());
       } catch (requestError) {
         if (!active || (requestError instanceof DOMException && requestError.name === "AbortError")) return;
-        setErrorEventId(eventId.trim());
         setError(
           requestError instanceof ApiError
             ? requestError.message
@@ -180,27 +240,22 @@ function LeaderboardPage({
       controller?.abort();
       window.clearInterval(intervalId);
     };
-  }, [eventId, validEventId, refreshKey]);
+  }, [queryKey, refreshKey, selectedEventId, selectedRouteSheetId, validSelection]);
 
-  const participants = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    const visibleData = validEventId && loadedEventId === eventId.trim() ? data : null;
-    if (!visibleData || !normalizedQuery) return visibleData?.participants ?? [];
-    return visibleData.participants.filter((participant) =>
+  const visibleData = validSelection && loadedQuery === queryKey ? data : null;
+  const normalizedQuery = query.trim().toLowerCase();
+  const participants = !visibleData || !normalizedQuery
+    ? visibleData?.participants ?? []
+    : visibleData.participants.filter((participant) =>
       participant.registration_number.toLowerCase().includes(normalizedQuery),
     );
-  }, [data, eventId, loadedEventId, query, validEventId]);
 
-  const visibleData = validEventId && loadedEventId === eventId.trim() ? data : null;
-  const visibleError = validEventId && errorEventId === eventId.trim() ? error : "";
-
-  function loadEvent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!validEventId) return;
+  function updateUrl(eventId: string, mode: string) {
     const params = new URLSearchParams(window.location.search);
-    params.set("eventId", eventId.trim());
+    params.set("eventId", eventId);
+    if (mode) params.set("routeSheetId", mode);
+    else params.delete("routeSheetId");
     window.history.replaceState(null, "", `/leaderboard?${params.toString()}`);
-    setRefreshKey((key) => key + 1);
   }
 
   return (
@@ -209,21 +264,48 @@ function LeaderboardPage({
       <div className="board-heading">
         <div>
           <h1>Рейтинг<span className="accent-dot">.</span></h1>
-          <p>{visibleData ? visibleData.event.name : "Результаты участников мероприятия"}</p>
+          <p>{currentEvent?.name ?? "Результаты участников мероприятия"}</p>
         </div>
-        <form className="board-event-form" onSubmit={loadEvent}>
-          <label htmlFor="board-event-id">Мероприятие</label>
-          <div>
-            <input id="board-event-id" inputMode="numeric" pattern="[1-9][0-9]*" required value={eventId} onChange={(event) => onEventIdChange(event.target.value)} placeholder="ID события" />
-            <button type="submit">Показать</button>
-          </div>
-        </form>
+        <div className="board-event-form">
+          <label htmlFor="board-event">Мероприятие</label>
+          <select
+            id="board-event"
+            value={selectedEventId}
+            disabled={eventsLoading || events.length === 0}
+            onChange={(event) => {
+              const nextId = event.target.value;
+              setSelectedEventId(nextId);
+              setSelectedMode("");
+              setError("");
+              updateUrl(nextId, "");
+            }}
+          >
+            {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <label htmlFor="board-mode">Режим рейтинга</label>
+          <select
+            id="board-mode"
+            value={selectedMode}
+            disabled={!currentEvent}
+            onChange={(event) => {
+              setSelectedMode(event.target.value);
+              setError("");
+              updateUrl(selectedEventId, event.target.value);
+            }}
+          >
+            <option value="">Общий рейтинг</option>
+            {currentEvent?.route_sheets.map((sheet) => (
+              <option key={sheet.id} value={sheet.id}>{sheet.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {!validEventId && <div className="notice-box">Введите ID мероприятия, чтобы загрузить публичный рейтинг.</div>}
-      {validEventId && loading && !visibleData && <div className="state-box" role="status"><span className="spinner" />Загружаем результаты…</div>}
-      {visibleError && <div className={visibleData ? "inline-error" : "state-box error-box"} role="alert">
-        <span>{visibleError}</span>
+      {!eventsLoading && events.length === 0 && !error && <div className="notice-box">Мероприятий пока нет.</div>}
+      {eventsLoading && <div className="state-box" role="status"><span className="spinner" />Загружаем мероприятия…</div>}
+      {validSelection && loading && !visibleData && <div className="state-box" role="status"><span className="spinner" />Загружаем результаты…</div>}
+      {error && <div className={visibleData ? "inline-error" : "state-box error-box"} role="alert">
+        <span>{error}</span>
         {!visibleData && <button className="retry-button" onClick={() => setRefreshKey((key) => key + 1)}>Повторить</button>}
       </div>}
 
@@ -240,14 +322,13 @@ function LeaderboardPage({
           </div>
           <div className="leaderboard-table" role="table" aria-label="Рейтинг участников">
             <div className="table-row table-header" role="row">
-              <span role="columnheader">МЕСТО</span><span role="columnheader">УЧАСТНИК</span><span role="columnheader">ПЛОЩАДКИ</span><span role="columnheader">БАЛЛЫ</span>
+              <span role="columnheader">МЕСТО</span><span role="columnheader">НОМЕР УЧАСТНИКА</span><span role="columnheader">ПЛОЩАДКИ</span><span role="columnheader">БАЛЛЫ</span>
             </div>
             {participants.map((participant) => (
               <div className="table-row" role="row" key={participant.registration_number}>
                 <strong className="rank-cell" role="cell">{String(participant.place).padStart(2, "0")}</strong>
                 <span className="participant-cell" role="cell">
-                  <strong>{participant.first_name} {participant.last_name}</strong>
-                  <small>№ {participant.registration_number}</small>
+                  <strong>№ {participant.registration_number}</strong>
                 </span>
                 <span className="progress-cell" role="cell" aria-label="Баллы по площадкам">
                   {participant.stations.map((station) => (
@@ -262,7 +343,7 @@ function LeaderboardPage({
             ))}
             {participants.length === 0 && <div className="empty-state">{visibleData.participants.length ? "Участник с таким номером не найден." : "В этом мероприятии пока нет участников."}</div>}
           </div>
-          <p className="privacy-note">Публично отображаются имя, номер и результаты; контакты не раскрываются. Равные результаты занимают одно место.</p>
+          <p className="privacy-note">Публично отображаются только номера участников и результаты. Равные результаты занимают одно место.</p>
         </>
       )}
     </main>
