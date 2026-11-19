@@ -18,12 +18,27 @@ config.set_main_option(
 )
 
 target_metadata = Base.metadata
+ARCHIVED_LEGACY_TABLES = frozenset(
+    {
+        "legacy_event_access",
+        "legacy_access_codes",
+        "legacy_access_sessions",
+        "legacy_user_organizer_flags",
+    }
+)
+
+
+def include_object(object_, name, type_, reflected, compare_to):
+    if type_ == "table" and reflected and name in ARCHIVED_LEGACY_TABLES:
+        return False
+    return True
 
 
 def run_migrations_offline() -> None:
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
@@ -44,6 +59,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_object=include_object,
             compare_type=True,
         )
 

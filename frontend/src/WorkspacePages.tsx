@@ -27,6 +27,7 @@ import {
   submitScoreWithAccessCode,
   updateStation,
   updateRouteSheet,
+  updateEvent,
   verifyAccessCode,
 } from "./api";
 import type {
@@ -254,6 +255,26 @@ export function WorkspacePage() {
     }
   }
 
+  async function handleUpdateEvent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedEvent) return;
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("eventName") ?? "").trim();
+    const eventDate = String(form.get("eventDate") ?? "");
+    try {
+      setError("");
+      setActionMessage("");
+      const updated = await updateEvent(selectedEvent.id, {
+        name,
+        event_date: eventDate,
+      });
+      setEvents((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setActionMessage("Мероприятие обновлено.");
+    } catch (requestError) {
+      setError(messageFor(requestError));
+    }
+  }
+
   return (
     <AuthenticatedPage title="Рабочее пространство" description="Управляйте мероприятиями, площадками и участниками.">
       {loading && <AuthLoading />}
@@ -296,6 +317,14 @@ export function WorkspacePage() {
                 <label>Название<input name="eventName" required maxLength={200} /></label>
                 <label>Дата<input name="eventDate" type="date" required /></label>
                 <button className="primary-button" type="submit">Создать мероприятие</button>
+              </form>
+            )}
+            {account.is_system_admin && selectedEvent && (
+              <form key={`${selectedEvent.id}-${selectedEvent.name}-${selectedEvent.event_date}`} className="workspace-form event-create-form" onSubmit={(event) => void handleUpdateEvent(event)}>
+                <h3>Изменить мероприятие</h3>
+                <label>Название мероприятия<input name="eventName" defaultValue={selectedEvent.name} required maxLength={200} /></label>
+                <label>Дата мероприятия<input name="eventDate" type="date" defaultValue={selectedEvent.event_date} required /></label>
+                <button className="primary-button" type="submit">Сохранить мероприятие</button>
               </form>
             )}
           </section>

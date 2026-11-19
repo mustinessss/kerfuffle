@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from uuid import UUID
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     Integer,
     PrimaryKeyConstraint,
     Text,
+    Uuid,
     UniqueConstraint,
     func,
     text,
@@ -264,6 +266,9 @@ class EventParticipant(Base):
         ID_TYPE, ForeignKey("people.id", ondelete="RESTRICT"), nullable=False
     )
     registration_number: Mapped[str] = mapped_column(Text, nullable=False)
+    legacy_qr_token: Mapped[UUID | None] = mapped_column(
+        "qr_token", Uuid(as_uuid=True), unique=True
+    )
     route_sheet_id: Mapped[int | None] = mapped_column(ID_TYPE)
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -229,6 +229,17 @@ def update_route_sheet(
     require_system_admin(user)
 
     updates = payload.model_dump(exclude_unset=True)
+    if "capacity" in updates and updates["capacity"] is not None:
+        assigned_count = session.scalar(
+            select(func.count())
+            .select_from(EventParticipant)
+            .where(EventParticipant.route_sheet_id == sheet.id)
+        )
+        if updates["capacity"] < assigned_count:
+            raise HTTPException(
+                status_code=409,
+                detail="Route sheet capacity cannot be lower than its current participant count",
+            )
     station_ids = updates.pop("station_ids", None)
     if station_ids is not None:
         found_station_ids = set(

@@ -270,6 +270,35 @@ def test_route_sheet_stations_can_be_edited_after_assignment(db_session, route_s
     assert db_session.get(EventParticipant, registered["id"]).route_sheet_id == sheet["id"]
 
 
+def test_route_sheet_capacity_cannot_be_reduced_below_assignments(
+    db_session, route_setup
+):
+    sheet = create_sheet(db_session, route_setup, capacity=2)
+    for registration_number in ("000001", "000002"):
+        register_participant_record(
+            route_setup["event"].id,
+            ParticipantCreate(
+                person=PersonCreate(
+                    first_name="Participant",
+                    last_name=registration_number,
+                ),
+                route_sheet_id=sheet["id"],
+                registration_number=registration_number,
+            ),
+            db_session,
+        )
+
+    with pytest.raises(HTTPException) as error:
+        update_route_sheet(
+            sheet["id"],
+            RouteSheetUpdate(capacity=1),
+            route_setup["admin"],
+            db_session,
+        )
+    assert error.value.status_code == 409
+    assert db_session.get(RouteSheet, sheet["id"]).capacity == 2
+
+
 @pytest.mark.skipif(
     not os.environ.get("KERFUFFLE_TEST_POSTGRES_URL"),
     reason="Set KERFUFFLE_TEST_POSTGRES_URL to a disposable PostgreSQL test database",

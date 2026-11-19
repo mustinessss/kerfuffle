@@ -373,6 +373,16 @@ export function createEvent(
   });
 }
 
+export function updateEvent(
+  eventId: number,
+  payload: Pick<EventSummary, "name" | "event_date">,
+) {
+  return requestJson<EventSummary>(`/events/${eventId}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
 export function getStations(eventId: number, accessToken: string, signal?: AbortSignal) {
   return requestJson<StationSummary[]>(`/events/${eventId}/stations`, { accessToken, signal });
 }

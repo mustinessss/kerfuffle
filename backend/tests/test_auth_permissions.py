@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-from app.api.v1.events import EventCreate, create_event
+from app.api.v1.events import EventCreate, EventUpdate, create_event, update_event
 from app.core.auth import create_initial_admin
 from app.core.permissions import require_event_access, require_station_access
 from app.db.models import Event, EventAccess, Station, User
@@ -136,6 +136,52 @@ def test_non_admin_cannot_create_event(db_session):
 
     assert error.value.status_code == 403
     assert db_session.query(Event).count() == 0
+
+
+def test_system_admin_can_update_event_details(db_session):
+    admin = User(
+        legacy_identity_subject="edit-admin",
+        display_name="Admin",
+        is_system_admin=True,
+    )
+    event_record = Event(
+        name="Old name",
+        event_date=datetime(2026, 11, 11).date(),
+    )
+    db_session.add_all([admin, event_record])
+    db_session.commit()
+
+    response = update_event(
+        event_record.id,
+        EventUpdate(name="  Updated event  ", event_date="2026-11-12"),
+        admin,
+        db_session,
+    )
+
+    assert response["name"] == "Updated event"
+    assert response["event_date"] == datetime(2026, 11, 12).date()
+    assert db_session.query(EventAccess).count() == 0
+
+
+def test_station_holder_cannot_update_event_details(db_session):
+    holder = User(legacy_identity_subject="event-holder", display_name="Holder")
+    event_record = Event(
+        name="Original",
+        event_date=datetime(2026, 11, 11).date(),
+    )
+    db_session.add_all([holder, event_record])
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as error:
+        update_event(
+            event_record.id,
+            EventUpdate(name="Unauthorized"),
+            holder,
+            db_session,
+        )
+
+    assert error.value.status_code == 403
+    assert db_session.get(Event, event_record.id).name == "Original"
 
 
 def test_create_admin_hashes_password_and_only_allows_one(db_session):

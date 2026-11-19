@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/events", tags=["Events"])
 
 
 class EventCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=200)
     event_date: date
 
     @field_validator("name")
@@ -25,6 +25,31 @@ class EventCreate(BaseModel):
         if not value:
             raise ValueError("Event name must not be blank")
         return value
+
+
+class EventUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    event_date: date | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Event name must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_changes(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one event field must be provided")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Event fields cannot be null")
+        return self
 
 
 def event_response(event: Event) -> dict[str, int | str | date]:
@@ -61,6 +86,27 @@ def create_event(
 
     event = Event(name=payload.name, event_date=payload.event_date)
     session.add(event)
+    session.commit()
+    session.refresh(event)
+    return event_response(event)
+
+
+@router.patch("/{event_id}", summary="Изменить мероприятие")
+def update_event(
+    event_id: int,
+    payload: EventUpdate,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db),
+):
+    event = session.get(Event, event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        )
+    require_system_admin(user)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(event, field, value)
     session.commit()
     session.refresh(event)
     return event_response(event)

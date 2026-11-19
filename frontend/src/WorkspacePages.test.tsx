@@ -9,6 +9,7 @@ import {
   getRouteSheets,
   getStations,
   registerParticipant,
+  updateEvent,
   verifyAccessCode,
 } from "./api";
 import { useAuth } from "./authContext";
@@ -30,6 +31,7 @@ vi.mock("./api", async (importOriginal) => {
     getRouteSheets: vi.fn(),
     getStations: vi.fn(),
     registerParticipant: vi.fn(),
+    updateEvent: vi.fn(),
     verifyAccessCode: vi.fn(),
   };
 });
@@ -66,6 +68,7 @@ const mockGetRouteSheets = vi.mocked(getRouteSheets);
 const mockGetStations = vi.mocked(getStations);
 const mockRegisterParticipant = vi.mocked(registerParticipant);
 const mockVerifyAccessCode = vi.mocked(verifyAccessCode);
+const mockUpdateEvent = vi.mocked(updateEvent);
 const mockUseAuth = vi.mocked(useAuth);
 
 afterEach(cleanup);
@@ -102,6 +105,7 @@ beforeEach(() => {
     event_id: event.id,
     station: null,
   });
+  mockUpdateEvent.mockResolvedValue(event);
   mockRegisterParticipant.mockResolvedValue({
     id: 41,
     event_id: event.id,
@@ -137,6 +141,25 @@ describe("WorkspacePage", () => {
       });
     });
     expect(await screen.findByText("Мероприятие создано.")).toBeTruthy();
+  });
+
+  it("allows a system administrator to update the selected event", async () => {
+    mockGetEvents.mockResolvedValue([event]);
+    render(<WorkspacePage />);
+    fireEvent.change(await screen.findByLabelText("Название мероприятия"), {
+      target: { value: "Updated event" },
+    });
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Сохранить мероприятие" }).closest("form")!,
+    );
+
+    await waitFor(() => {
+      expect(mockUpdateEvent).toHaveBeenCalledWith(event.id, {
+        name: "Updated event",
+        event_date: event.event_date,
+      });
+    });
+    expect(await screen.findByText("Мероприятие обновлено.")).toBeTruthy();
   });
 
   it("does not render event creation for an unauthenticated user", () => {
