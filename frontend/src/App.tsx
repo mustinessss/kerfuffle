@@ -9,15 +9,13 @@ import {
 import { useAuth } from "./authContext";
 import { RegistrationPage, ScoringPage, WorkspacePage } from "./WorkspacePages";
 import {
-  AdminUsersPage,
   ForgotPasswordPage,
-  InvitationPage,
   LoginPage,
   ResetPasswordPage,
 } from "./AccountPages";
 import "./styles.css";
 
-type Page = "home" | "leaderboard" | "registration" | "scoring" | "workspace" | "login" | "accept-invitation" | "forgot-password" | "reset-password" | "admin-users";
+type Page = "home" | "leaderboard" | "registration" | "scoring" | "workspace" | "login" | "forgot-password" | "reset-password";
 
 function currentPage(): Page {
   const path = window.location.pathname.replace(/\/+$/, "");
@@ -26,10 +24,8 @@ function currentPage(): Page {
   if (path === "/score") return "scoring";
   if (path === "/workspace") return "workspace";
   if (path === "/login") return "login";
-  if (path === "/accept-invitation") return "accept-invitation";
   if (path === "/forgot-password") return "forgot-password";
   if (path === "/reset-password") return "reset-password";
-  if (path === "/admin/users") return "admin-users";
   return "home";
 }
 
@@ -50,7 +46,6 @@ function App() {
         </a>
         <nav className="header-nav" aria-label="Основная навигация">
           <a href="/leaderboard">Рейтинг</a>
-          {user?.is_system_admin && <a href="/admin/users">Пользователи</a>}
           <a href={user ? "/workspace" : "/login"}>{user ? "Кабинет" : "Войти"} <span aria-hidden="true">↗</span></a>
         </nav>
       </header>
@@ -81,7 +76,7 @@ function App() {
             </div>
           </section>
 
-          <p className="home-note">Нужен доступ сотрудника? <a href="/workspace">Рабочее пространство</a></p>
+          <p className="home-note">Системный администратор? <a href="/workspace">Рабочее пространство</a></p>
         </main>
       )}
 
@@ -90,10 +85,8 @@ function App() {
       {page === "scoring" && <ScoringPage />}
       {page === "workspace" && <WorkspacePage />}
       {page === "login" && <LoginPage />}
-      {page === "accept-invitation" && <InvitationPage />}
       {page === "forgot-password" && <ForgotPasswordPage />}
       {page === "reset-password" && <ResetPasswordPage />}
-      {page === "admin-users" && <AdminUsersPage />}
 
       <footer className="site-footer">
         <a className="footer-brand" href="/">mustiness</a>

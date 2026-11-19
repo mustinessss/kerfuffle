@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str | None = None
     smtp_use_tls: bool = True
-    manual_auth_links_enabled: bool = False
     # Set only on the one-shot Alembic migration service, which connects as DB owner.
     database_migration_mode: bool = False
 
@@ -65,10 +64,10 @@ class Settings(BaseSettings):
                 "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM "
                 "must be configured together"
             )
-        elif not smtp_configured and not self.manual_auth_links_enabled:
+        elif not smtp_configured:
             missing.append(
-                "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM or "
-                "MANUAL_AUTH_LINKS_ENABLED=true"
+                "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM are required "
+                "for administrator password recovery"
             )
 
         database_url = make_url(self.database_url)

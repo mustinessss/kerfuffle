@@ -36,11 +36,6 @@ export interface CurrentAccount {
   email: string | null;
   display_name: string;
   is_system_admin: boolean;
-  access: Array<{
-    event_id: number;
-    role: "station_operator";
-    station_id: number | null;
-  }>;
 }
 
 export interface EventSummary {
@@ -97,30 +92,6 @@ export interface VerifiedAccess {
     score_max: number;
     score_step: number;
   } | null;
-}
-
-export interface CreatedInvitation {
-  id: number;
-  email: string;
-  status: "sent" | "pending";
-  expires_at: string;
-  invitation_url: string | null;
-  delivery_method: "email" | "manual";
-}
-
-export interface AdminUser extends CurrentAccount {
-  is_active: boolean;
-  last_login_at: string | null;
-  events: Array<{ event_id: number; role: "station_operator"; station_id: number }>;
-}
-
-export interface AdminInvitation {
-  id: number;
-  email: string;
-  status: "sent" | "pending" | "expired" | "used" | "revoked";
-  created_at: string;
-  expires_at: string;
-  sent_at: string | null;
 }
 
 export interface RegisteredParticipant {
@@ -281,13 +252,6 @@ export function logoutFromAccount() {
   return requestJson<{ ok: boolean }>("/auth/logout", { method: "POST", body: {} });
 }
 
-export function acceptAccountInvitation(payload: { token: string; display_name: string; password: string }) {
-  return requestJson<{ ok: boolean; email: string }>("/public/invitations/accept", {
-    method: "POST",
-    body: payload,
-  });
-}
-
 export function requestPasswordReset(email: string) {
   return requestJson<{ ok: boolean }>("/public/password-reset/request", {
     method: "POST",
@@ -300,64 +264,6 @@ export function completePasswordReset(payload: { token: string; password: string
     method: "POST",
     body: payload,
   });
-}
-
-export function getAdminUsers(signal?: AbortSignal) {
-  return requestJson<AdminUser[]>("/system-admin/users", { signal });
-}
-
-export function getAdminInvitations(signal?: AbortSignal) {
-  return requestJson<AdminInvitation[]>("/system-admin/invitations", { signal });
-}
-
-export function inviteStaffAccount(email: string) {
-  return requestJson<CreatedInvitation>("/system-admin/invitations", {
-    method: "POST",
-    body: { email },
-  });
-}
-
-export function revokeInvitation(invitationId: number) {
-  return requestJson<{ ok: boolean }>(`/system-admin/invitations/${invitationId}/revoke`, {
-    method: "POST",
-    body: {},
-  });
-}
-
-export function resendInvitation(invitationId: number) {
-  return requestJson<CreatedInvitation>(`/system-admin/invitations/${invitationId}/resend`, {
-    method: "POST",
-    body: {},
-  });
-}
-
-export function setUserBlocked(userId: number, blocked: boolean) {
-  return requestJson<{ ok: boolean }>(`/system-admin/users/${userId}/${blocked ? "block" : "unblock"}`, {
-    method: "POST",
-    body: {},
-  });
-}
-
-export function createManualPasswordResetLink(userId: number) {
-  return requestJson<{ reset_url: string; expires_in_minutes: number }>(
-    `/system-admin/users/${userId}/password-reset-link`,
-    { method: "POST", body: {} },
-  );
-}
-
-export function setUserStationAccess(
-  userId: number,
-  eventId: number,
-  stationId: number,
-  assigned: boolean,
-) {
-  return requestJson<{ ok: boolean }>(
-    `/system-admin/users/${userId}/events/${eventId}/stations/${stationId}`,
-    {
-      method: assigned ? "PUT" : "DELETE",
-      body: assigned ? {} : undefined,
-    },
-  );
 }
 
 export function getEvents(accessToken = "", signal?: AbortSignal) {
@@ -572,31 +478,6 @@ export function registerParticipant(
       route_sheet_id: routeSheetId,
       registration_number: registrationNumber,
     },
-  });
-}
-
-export function lookupParticipant(
-  stationId: number,
-  accessToken: string,
-  registrationNumber: string,
-) {
-  return requestJson<ParticipantLookup>(`/stations/${stationId}/participants/lookup`, {
-    accessToken,
-    method: "POST",
-    body: { registration_number: registrationNumber },
-  });
-}
-
-export function submitScore(
-  stationId: number,
-  accessToken: string,
-  eventParticipantId: number,
-  points: number,
-) {
-  return requestJson<ScoreRecord>(`/stations/${stationId}/scores`, {
-    accessToken,
-    method: "POST",
-    body: { event_participant_id: eventParticipantId, points },
   });
 }
 

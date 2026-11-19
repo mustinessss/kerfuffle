@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access, require_system_admin
+from app.core.permissions import require_system_admin
 from app.db.models import Event, Score, Station, User
 from app.db.session import get_db
 
@@ -89,15 +89,8 @@ def list_stations(
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    accesses = require_event_access(session, user, event_id)
+    require_system_admin(user)
     statement = select(Station).where(Station.event_id == event_id)
-    if not user.is_system_admin:
-        assigned_station_ids = [
-            access.station_id
-            for access in accesses
-            if access.role == "station_operator" and access.station_id is not None
-        ]
-        statement = statement.where(Station.id.in_(assigned_station_ids))
     stations = session.scalars(statement.order_by(Station.id))
     return [station_response(station) for station in stations]
 

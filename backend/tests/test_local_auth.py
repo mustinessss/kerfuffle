@@ -8,10 +8,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.auth import create_initial_admin
 from app.core.config import Settings, get_settings
+from app.core.passwords import hash_password, hash_token
 from app.db.models import User, UserSession
 from app.db.session import Base, get_db
 from app.main import app
-from app.core.passwords import hash_token
 
 
 @pytest.fixture
@@ -109,6 +109,61 @@ def test_login_returns_same_generic_error_for_unknown_email_and_bad_password(aut
 
     assert wrong_password.status_code == unknown_email.status_code == 401
     assert wrong_password.json() == unknown_email.json()
+
+
+def test_employee_account_cannot_log_in(auth_client):
+    client, engine = auth_client
+    with Session(engine) as session:
+        session.add(
+            User(
+                email="employee@example.test",
+                display_name="Employee",
+                password_hash=hash_password("EmployeePassword123"),
+            )
+        )
+        session.commit()
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "employee@example.test", "password": "EmployeePassword123"},
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Неверный email или пароль."
+    assert "kerfuffle_session" not in response.cookies
+
+
+def test_existing_employee_session_is_revoked(auth_client):
+    client, engine = auth_client
+    raw_token = "legacy-employee-session"
+    with Session(engine) as session:
+        employee = User(
+            email="employee@example.test",
+            display_name="Employee",
+            password_hash=hash_password("EmployeePassword123"),
+        )
+        session.add(employee)
+        session.flush()
+        record = UserSession(
+            user_id=employee.id,
+            token_hash=hash_token(raw_token),
+            csrf_token_hash=hash_token("employee-csrf-token"),
+            last_activity_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        session.add(record)
+        session.commit()
+
+    client.cookies.set("kerfuffle_session", raw_token)
+    response = client.get("/api/v1/auth/me")
+
+    assert response.status_code == 403
+    with Session(engine) as session:
+        record = session.query(UserSession).filter_by(
+            token_hash=hash_token(raw_token)
+        ).one()
+        assert record.revoked_at is not None
 
 
 def test_blocked_user_cannot_login(auth_client):

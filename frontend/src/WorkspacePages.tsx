@@ -17,13 +17,11 @@ import {
   getRouteSheets,
   getEventScores,
   getStations,
-  lookupParticipant,
   lookupWithAccessCode,
   registerParticipant,
   registerParticipantWithAccessCode,
   deleteRouteSheet,
   revokeAccessCode,
-  submitScore,
   submitScoreWithAccessCode,
   updateStation,
   updateRouteSheet,
@@ -87,7 +85,6 @@ function AuthGate() {
     </section>
   );
 }
-
 function AuthLoading() {
   return <div className="state-box" role="status"><span className="spinner" />Проверяем сессию…</div>;
 }
@@ -282,7 +279,7 @@ export function WorkspacePage() {
         <>
           <section className="workspace-card account-summary">
             <div><span>ПОЛЬЗОВАТЕЛЬ</span><strong>{account.display_name}</strong></div>
-            <div><span>ДОСТУП</span><strong>{account.is_system_admin ? "Системный администратор" : "По назначенным ролям"}</strong></div>
+            <div><span>ДОСТУП</span><strong>Системный администратор</strong></div>
           </section>
           <section className="workspace-section">
             <div className="workspace-section-heading">
@@ -307,7 +304,7 @@ export function WorkspacePage() {
             )}
             {!selectedEvent && (
               <div className="workspace-card empty-workspace">
-                <p>{account.is_system_admin ? "Создайте первое мероприятие, чтобы начать настройку." : "Пока нет мероприятий, к которым у вас есть доступ."}</p>
+                <p>Создайте первое мероприятие, чтобы начать настройку.</p>
               </div>
             )}
             {account.is_system_admin && (
@@ -1116,7 +1113,6 @@ export function RegistrationPage() {
   return (
     <AuthenticatedPage title="Регистрация участника" description="Системный администратор регистрирует участников. Регистратор входит по выданному коду.">
       {loading && <AuthLoading />}
-      {user && !canRegister && <p className="form-error" role="alert">Регистрация доступна только системному администратору или назначенному регистратору этого мероприятия.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       {!loading && canRegister && (
         <>
@@ -1237,13 +1233,10 @@ function RegistrarCodeRegistrationPage() {
 }
 
 export function ScoringPage() {
-  const [accountLogin, setAccountLogin] = useState(false);
-  return accountLogin
-    ? <AccountScoringPage />
-    : <CodeScoringPage onUseAccountLogin={() => setAccountLogin(true)} />;
+  return <CodeScoringPage />;
 }
 
-function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void }) {
+function CodeScoringPage() {
   const [code, setCode] = useState("");
   const [access, setAccess] = useState<VerifiedAccess | null>(null);
   const [registrationNumber, setRegistrationNumber] = useState("");
@@ -1393,211 +1386,6 @@ function CodeScoringPage({ onUseAccountLogin }: { onUseAccountLogin: () => void 
         </>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="quiet-button staff-account-link" onClick={onUseAccountLogin}>Войти через учётную запись держателя площадки</button>
     </main>
-  );
-}
-
-function AccountScoringPage() {
-  const { user } = useAuth();
-  const accessToken = "";
-  const [events, setEvents] = useState<EventSummary[]>([]);
-  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
-  const [stations, setStations] = useState<StationSummary[]>([]);
-  const [stationsEventId, setStationsEventId] = useState<number | null>(null);
-  const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
-  const [registrationNumber, setRegistrationNumber] = useState("");
-  const [participant, setParticipant] = useState<ParticipantLookup | null>(null);
-  const [points, setPoints] = useState(0);
-  const [eventsLoaded, setEventsLoaded] = useState(false);
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const visibleStations = stationsEventId === selectedEventId ? stations : [];
-  const selectedStation = visibleStations.find((station) => station.id === selectedStationId) ?? null;
-  const loading = !eventsLoaded || (selectedEventId !== null && stationsEventId !== selectedEventId);
-
-  useEffect(() => {
-    if (!user) return;
-    const controller = new AbortController();
-    let active = true;
-    getEvents(accessToken, controller.signal)
-      .then((nextEvents) => {
-        if (!active) return;
-        setEvents(nextEvents);
-        setSelectedEventId(nextEvents[0]?.id ?? null);
-        setError("");
-      })
-      .catch((requestError: unknown) => {
-        if (active && !controller.signal.aborted) setError(messageFor(requestError));
-      })
-      .finally(() => {
-        if (active) setEventsLoaded(true);
-      });
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [accessToken, user]);
-
-  useEffect(() => {
-    if (selectedEventId === null) return;
-    const controller = new AbortController();
-    let active = true;
-    getStations(selectedEventId, accessToken, controller.signal)
-      .then((nextStations) => {
-        if (!active) return;
-        setStations(nextStations);
-        setStationsEventId(selectedEventId);
-        setSelectedStationId(nextStations[0]?.id ?? null);
-        setPoints(nextStations[0]?.score_min ?? 0);
-        setError("");
-      })
-      .catch((requestError: unknown) => {
-        if (active && !controller.signal.aborted) {
-          setStations([]);
-          setStationsEventId(selectedEventId);
-          setSelectedStationId(null);
-          setError(messageFor(requestError));
-        }
-      });
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [accessToken, selectedEventId]);
-
-  const stationSummary = selectedStation
-    ? `${selectedStation.score_min}–${selectedStation.score_max} баллов · шаг ${selectedStation.score_step}`
-    : "";
-
-  async function handleLookup(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedStation) return;
-    setWorking(true);
-    setError("");
-    setSuccess("");
-    setParticipant(null);
-    try {
-      const result = await lookupParticipant(selectedStation.id, accessToken, registrationNumber);
-      setParticipant(result);
-      if (result.already_scored && result.score) {
-        setSuccess(result.score.is_annulled
-          ? "Начисление аннулировано администратором. Повторно начислить баллы нельзя."
-          : `Участник уже прошёл эту площадку: ${result.score.points} баллов.`);
-      }
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function handleSubmitScore() {
-    if (!selectedStation || !participant || participant.already_scored) return;
-    setWorking(true);
-    setError("");
-    setSuccess("");
-    try {
-      const score = await submitScore(
-        selectedStation.id,
-        accessToken,
-        participant.event_participant_id,
-        points,
-      );
-      setParticipant((current) => current
-        ? { ...current, already_scored: true, score }
-        : current);
-      setSuccess(`Начислено ${score.points} баллов. Повторное начисление на этой площадке запрещено.`);
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  return (
-    <AuthenticatedPage title="Начисление баллов" description="Войдите под учётной записью, которой назначена нужная площадка.">
-      {loading && <AuthLoading />}
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <>
-        <section className="workspace-card scoring-controls">
-          <label>Мероприятие
-            <select value={selectedEventId ?? ""} onChange={(event) => {
-              setSelectedEventId(Number(event.target.value));
-              setSelectedStationId(null);
-              setParticipant(null);
-              setRegistrationNumber("");
-              setPoints(0);
-              setSuccess("");
-            }}>
-              {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
-          <label>Ваша площадка
-            <select value={selectedStationId ?? ""} onChange={(event) => {
-              const stationId = Number(event.target.value);
-              setSelectedStationId(stationId);
-              setParticipant(null);
-              setRegistrationNumber("");
-              setPoints(visibleStations.find((station) => station.id === stationId)?.score_min ?? 0);
-              setSuccess("");
-            }}>
-              {visibleStations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-            </select>
-          </label>
-          {selectedStation && <p className="scoring-scale">{stationSummary}</p>}
-          {!loading && selectedEventId !== null && visibleStations.length === 0 && <p className="backend-gap-note">Нет доступных площадок. Проверьте назначение роли для мероприятия.</p>}
-        </section>
-        {selectedStation && (
-          <section className="workspace-card scoring-card">
-            <form className="lookup-form" onSubmit={(event) => void handleLookup(event)}>
-              <label htmlFor="participant-code">Шестизначный номер участника</label>
-              <div>
-                <input
-                  id="participant-code"
-                  inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  required
-                  value={registrationNumber}
-                  onChange={(event) => setRegistrationNumber(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder="000001"
-                />
-                <button className="primary-button" disabled={working || registrationNumber.length !== 6}>{working ? "Ищем…" : "Найти"}</button>
-              </div>
-            </form>
-            {participant && (
-              <div className="participant-confirmation">
-                <p className="eyebrow">УЧАСТНИК НАЙДЕН</p>
-                <h2>{participant.first_name} {participant.last_name}</h2>
-                <p>Номер {participant.registration_number}</p>
-                {participant.already_scored ? (
-                  <div className="already-scored-message" role="status">
-                    {participant.score?.is_annulled
-                      ? "Результат аннулирован администратором. Повторное начисление на этой площадке запрещено."
-                      : <>Эта площадка уже пройдена. Ранее начислено <strong>{participant.score?.points ?? 0}</strong> баллов.</>}
-                  </div>
-                ) : (
-                  <>
-                    <div className="stepper" aria-label="Количество баллов">
-                      <button aria-label="Уменьшить баллы" disabled={working || points <= selectedStation.score_min} onClick={() => setPoints((value) => Math.max(selectedStation.score_min, value - selectedStation.score_step))}>−</button>
-                      <output aria-live="polite">{points}</output>
-                      <button aria-label="Увеличить баллы" disabled={working || points >= selectedStation.score_max} onClick={() => setPoints((value) => Math.min(selectedStation.score_max, value + selectedStation.score_step))}>+</button>
-                    </div>
-                    <p className="stepper-hint">Шаг {selectedStation.score_step} · максимум {selectedStation.score_max}</p>
-                    <button className="primary-button submit-score-button" disabled={working || points < selectedStation.score_min || points > selectedStation.score_max} onClick={() => void handleSubmitScore()}>
-                      {working ? "Сохраняем…" : "Подтвердить баллы"}
-                    </button>
-                  </>
-                )}
-                {success && <p className="success-message" role="status">{success}</p>}
-              </div>
-            )}
-          </section>
-        )}
-        <p className="backend-gap-note">Доступ к площадке определяется коротким кодом, привязанным системным администратором. Повторное начисление и допустимая шкала проверяются сервером и базой данных.</p>
-      </>
-    </AuthenticatedPage>
   );
 }

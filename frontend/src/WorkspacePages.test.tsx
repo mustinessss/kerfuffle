@@ -49,7 +49,6 @@ const admin = {
   email: "admin@example.test",
   display_name: "Admin",
   is_system_admin: true,
-  access: [],
 };
 
 const event = {
@@ -319,23 +318,13 @@ describe("WorkspacePage", () => {
   });
 });
 
-it("loads assigned stations in account-based scoring without a bearer token", async () => {
-  mockGetEvents.mockResolvedValue([event]);
-  mockGetStations.mockResolvedValue([station]);
-
+it("uses only short-code access for station scoring", () => {
   render(<ScoringPage />);
-  fireEvent.click(
-    screen.getByRole("button", {
-      name: "Войти через учётную запись держателя площадки",
-    }),
-  );
 
-  expect(await screen.findByRole("option", { name: "Main stage" })).toBeTruthy();
-  expect(mockGetStations).toHaveBeenCalledWith(
-    event.id,
-    "",
-    expect.any(AbortSignal),
-  );
+  expect(screen.getByLabelText("Код доступа площадки")).toBeTruthy();
+  expect(screen.queryByRole("button", {
+    name: "Войти через учётную запись держателя площадки",
+  })).toBeNull();
 });
 
 it("registers a participant with a manual six-digit number and personal fields", async () => {

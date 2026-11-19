@@ -2,12 +2,10 @@ from fastapi import FastAPI
 
 from app.api.v1.access_codes import router as access_codes_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.account_recovery import public_router as account_recovery_router
 from app.api.v1.events import router as events_router
 from app.api.v1.health import router as health_router
 from app.api.v1.leaderboard import router as leaderboard_router
-from app.api.v1.me import router as me_router
-from app.api.v1.system_admin import router as system_admin_router
-from app.api.v1.system_admin import public_router as public_account_router
 from app.api.v1.participants import router as participants_router
 from app.api.v1.route_sheets import router as route_sheets_router
 from app.api.v1.scores import router as scores_router
@@ -28,9 +26,7 @@ app = FastAPI(
 app.include_router(health_router, prefix=settings.api_v1_prefix)
 app.include_router(access_codes_router, prefix=settings.api_v1_prefix)
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
-app.include_router(me_router, prefix=settings.api_v1_prefix)
-app.include_router(system_admin_router, prefix=settings.api_v1_prefix)
-app.include_router(public_account_router, prefix=settings.api_v1_prefix)
+app.include_router(account_recovery_router, prefix=settings.api_v1_prefix)
 app.include_router(events_router, prefix=settings.api_v1_prefix)
 app.include_router(stations_router, prefix=settings.api_v1_prefix)
 app.include_router(participants_router, prefix=settings.api_v1_prefix)

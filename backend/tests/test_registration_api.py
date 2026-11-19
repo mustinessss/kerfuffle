@@ -23,7 +23,6 @@ from app.api.v1.stations import (
 )
 from app.db.models import (
     Event,
-    EventAccess,
     EventParticipant,
     Person,
     RouteSheet,
@@ -120,7 +119,7 @@ def test_only_system_admin_can_create_or_update_stations(db_session, event_team)
     assert error.value.status_code == 403
 
 
-def test_station_operator_only_sees_assigned_station(db_session, event_team):
+def test_employee_account_cannot_list_stations(db_session, event_team):
     event_record, admin, _, operator = event_team
     assigned = Station(
         event_id=event_record.id,
@@ -138,21 +137,13 @@ def test_station_operator_only_sees_assigned_station(db_session, event_team):
     )
     db_session.add_all([assigned, unassigned])
     db_session.flush()
-    db_session.add(
-        EventAccess(
-            user_id=operator.id,
-            event_id=event_record.id,
-            role="station_operator",
-            station_id=assigned.id,
-        )
-    )
-    db_session.flush()
 
     organizer_stations = list_stations(event_record.id, admin, db_session)
-    operator_stations = list_stations(event_record.id, operator, db_session)
 
     assert len(organizer_stations) == 2
-    assert [station["id"] for station in operator_stations] == [assigned.id]
+    with pytest.raises(HTTPException) as error:
+        list_stations(event_record.id, operator, db_session)
+    assert error.value.status_code == 403
 
 
 def test_station_scale_validation_and_post_score_lock(db_session, event_team):

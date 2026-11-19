@@ -7,8 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.events import EventCreate, EventUpdate, create_event, update_event
 from app.core.auth import create_initial_admin
-from app.core.permissions import require_event_access, require_station_access
-from app.db.models import Event, EventAccess, Station, User
+from app.db.models import Event, EventAccess, User
 from app.db.session import Base
 
 
@@ -26,81 +25,6 @@ def db_session():
     with Session(engine) as session:
         yield session
     engine.dispose()
-
-
-def test_event_access_is_limited_to_station_assignments(db_session):
-    user = User(legacy_identity_subject="sub-1", display_name="User")
-    event_record = Event(name="Conference", event_date=datetime(2026, 11, 11).date())
-    station = Station(
-        event_id=0,
-        name="North",
-        score_min=0,
-        score_max=10,
-        score_step=1,
-    )
-    db_session.add_all([user, event_record])
-    db_session.flush()
-    station.event_id = event_record.id
-    db_session.add(station)
-    db_session.flush()
-    db_session.add(
-        EventAccess(
-            user_id=user.id,
-            event_id=event_record.id,
-            role="station_operator",
-            station_id=station.id,
-        )
-    )
-    db_session.flush()
-
-    assert require_event_access(db_session, user, event_record.id)[0].role == "station_operator"
-    with pytest.raises(HTTPException) as error:
-        require_event_access(db_session, User(display_name="No access"), event_record.id)
-
-    assert error.value.status_code == 403
-
-
-def test_station_operator_only_has_access_to_assigned_station(db_session):
-    user = User(legacy_identity_subject="sub-2", display_name="Operator")
-    event_record = Event(name="Conference", event_date=datetime(2026, 11, 11).date())
-    db_session.add_all([user, event_record])
-    db_session.flush()
-    assigned = Station(
-        event_id=event_record.id,
-        name="North",
-        score_min=0,
-        score_max=10,
-        score_step=1,
-    )
-    other = Station(
-        event_id=event_record.id,
-        name="South",
-        score_min=0,
-        score_max=10,
-        score_step=1,
-    )
-    db_session.add_all([assigned, other])
-    db_session.flush()
-    db_session.add(
-        EventAccess(
-            user_id=user.id,
-            event_id=event_record.id,
-            role="station_operator",
-            station_id=assigned.id,
-        )
-    )
-    db_session.flush()
-
-    assert (
-        require_station_access(
-            db_session, user, assigned.id, {"station_operator"}
-        ).station_id
-        == assigned.id
-    )
-    with pytest.raises(HTTPException) as error:
-        require_station_access(db_session, user, other.id, {"station_operator"})
-
-    assert error.value.status_code == 403
 
 
 def test_system_admin_creates_event_without_event_role_record(db_session):

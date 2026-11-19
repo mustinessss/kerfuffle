@@ -16,15 +16,13 @@ from app.api.v1.scores import (
     ScoreCreate,
     ScoreUpdate,
     annul_score,
-    create_score,
     create_score_record,
     list_event_scores,
-    lookup_participant,
+    lookup_participant_record,
     update_score,
 )
 from app.db.models import (
     Event,
-    EventAccess,
     EventParticipant,
     Person,
     RouteSheet,
@@ -61,10 +59,9 @@ def scoring_setup(db_session):
         is_system_admin=True,
     )
     operator = User(legacy_identity_subject="operator", display_name="Operator")
-    other_user = User(legacy_identity_subject="other", display_name="Other")
     event_record = Event(name="Kerfuffle", event_date=date(2026, 11, 11))
     other_event = Event(name="Other", event_date=date(2026, 11, 12))
-    db_session.add_all([organizer, operator, other_user, event_record, other_event])
+    db_session.add_all([organizer, operator, event_record, other_event])
     db_session.flush()
     station = Station(
         event_id=event_record.id,
@@ -122,23 +119,11 @@ def scoring_setup(db_session):
     ]
     db_session.add_all(registrations)
     db_session.flush()
-    db_session.add_all(
-        [
-            EventAccess(
-                user_id=operator.id,
-                event_id=event_record.id,
-                role="station_operator",
-                station_id=station.id,
-            ),
-        ]
-    )
-    db_session.flush()
     return {
         "event": event_record,
         "other_event": other_event,
         "organizer": organizer,
         "operator": operator,
-        "other_user": other_user,
         "station": station,
         "another_station": another_station,
         "other_station": other_station,
@@ -147,15 +132,13 @@ def scoring_setup(db_session):
     }
 
 
-def test_operator_looks_up_participant_by_six_digit_number(
+def test_participant_lookup_uses_six_digit_number(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
-    operator = scoring_setup["operator"]
-    number_result = lookup_participant(
+    number_result = lookup_participant_record(
         station.id,
         ParticipantLookup(registration_number="000001"),
-        operator,
         db_session,
     )
 
@@ -164,34 +147,30 @@ def test_operator_looks_up_participant_by_six_digit_number(
     assert "phone" not in number_result
 
 
-def test_operator_can_score_once_and_lookup_shows_existing_score(
+def test_score_record_can_be_created_once_and_lookup_shows_it(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
-    operator = scoring_setup["operator"]
     registration = scoring_setup["registrations"][0]
-    score = create_score(
+    score = create_score_record(
         station.id,
         ScoreCreate(event_participant_id=registration.id, points=6),
-        operator,
         db_session,
     )
 
     assert score["points"] == 6
-    lookup = lookup_participant(
+    lookup = lookup_participant_record(
         station.id,
         ParticipantLookup(registration_number="000001"),
-        operator,
         db_session,
     )
     assert lookup["already_scored"] is True
     assert lookup["score"]["id"] == score["id"]
 
     with pytest.raises(HTTPException) as error:
-        create_score(
+        create_score_record(
             station.id,
             ScoreCreate(event_participant_id=registration.id, points=8),
-            operator,
             db_session,
         )
     assert error.value.status_code == 409
@@ -202,47 +181,28 @@ def test_score_validation_rejects_bad_scale_and_wrong_event(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
-    operator = scoring_setup["operator"]
 
     with pytest.raises(HTTPException) as error:
-        create_score(
+        create_score_record(
             station.id,
             ScoreCreate(
                 event_participant_id=scoring_setup["registrations"][0].id,
                 points=5,
             ),
-            operator,
             db_session,
         )
     assert error.value.status_code == 422
 
     with pytest.raises(HTTPException) as error:
-        create_score(
+        create_score_record(
             station.id,
             ScoreCreate(
                 event_participant_id=scoring_setup["registrations"][3].id,
                 points=6,
             ),
-            operator,
             db_session,
         )
     assert error.value.status_code == 404
-
-
-def test_only_assigned_station_can_be_used_for_lookup_or_scoring(
-    db_session, scoring_setup
-):
-    operator = scoring_setup["operator"]
-    other_station = scoring_setup["another_station"]
-
-    with pytest.raises(HTTPException) as error:
-        lookup_participant(
-            other_station.id,
-            ParticipantLookup(registration_number="000001"),
-            operator,
-            db_session,
-        )
-    assert error.value.status_code == 403
 
 
 def test_only_system_admin_can_correct_a_score(db_session, scoring_setup):
@@ -250,10 +210,9 @@ def test_only_system_admin_can_correct_a_score(db_session, scoring_setup):
     registration = scoring_setup["registrations"][0]
     operator = scoring_setup["operator"]
     organizer = scoring_setup["organizer"]
-    score_response = create_score(
+    score_response = create_score_record(
         station.id,
         ScoreCreate(event_participant_id=registration.id, points=4),
-        operator,
         db_session,
     )
 
@@ -305,10 +264,9 @@ def test_system_admin_can_annul_score_and_audit_reason(
 ):
     station = scoring_setup["station"]
     registration = scoring_setup["registrations"][0]
-    score = create_score(
+    score = create_score_record(
         station.id,
         ScoreCreate(event_participant_id=registration.id, points=6),
-        scoring_setup["operator"],
         db_session,
     )
 
@@ -325,10 +283,9 @@ def test_system_admin_can_annul_score_and_audit_reason(
     assert audit.points_before == audit.points_after == 6
     assert audit.reason == "Participant was scored in error"
 
-    lookup = lookup_participant(
+    lookup = lookup_participant_record(
         station.id,
         ParticipantLookup(registration_number="000001"),
-        scoring_setup["operator"],
         db_session,
     )
     assert lookup["already_scored"] is True
@@ -339,13 +296,12 @@ def test_only_system_admin_can_annul_score_and_duplicate_annulment_is_rejected(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
-    score = create_score(
+    score = create_score_record(
         station.id,
         ScoreCreate(
             event_participant_id=scoring_setup["registrations"][0].id,
             points=6,
         ),
-        scoring_setup["operator"],
         db_session,
     )
     request = ScoreAnnulment(reason="Duplicate scoring")
@@ -364,13 +320,12 @@ def test_system_admin_can_read_event_score_history(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
-    score = create_score(
+    score = create_score_record(
         station.id,
         ScoreCreate(
             event_participant_id=scoring_setup["registrations"][0].id,
             points=4,
         ),
-        scoring_setup["operator"],
         db_session,
     )
     update_score(
@@ -401,10 +356,9 @@ def test_public_leaderboard_includes_zero_scores_and_tied_places(
     registrations = scoring_setup["registrations"]
     operator = scoring_setup["operator"]
     for registration in registrations[:2]:
-        create_score(
+        create_score_record(
             station.id,
             ScoreCreate(event_participant_id=registration.id, points=6),
-            operator,
             db_session,
         )
 
@@ -448,13 +402,12 @@ def test_annulled_score_is_excluded_from_public_leaderboard(
     db_session, scoring_setup
 ):
     station = scoring_setup["station"]
-    score = create_score(
+    score = create_score_record(
         station.id,
         ScoreCreate(
             event_participant_id=scoring_setup["registrations"][0].id,
             points=6,
         ),
-        scoring_setup["operator"],
         db_session,
     )
     annul_score(
@@ -577,10 +530,9 @@ def test_public_leaderboard_supports_route_sheet_and_counts_off_route_scores(
     registration = scoring_setup["registrations"][0]
     registration.route_sheet_id = route_sheet.id
     db_session.flush()
-    create_score(
+    create_score_record(
         scoring_setup["station"].id,
         ScoreCreate(event_participant_id=registration.id, points=6),
-        scoring_setup["operator"],
         db_session,
     )
 

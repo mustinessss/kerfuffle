@@ -192,6 +192,14 @@ def get_current_user(
         session.commit()
         clear_user_session_cookies(response, settings)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Учётная запись недоступна.")
+    if not user.is_system_admin:
+        user_session.revoked_at = now
+        session.commit()
+        clear_user_session_cookies(response, settings)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Вход по учётной записи доступен только системному администратору.",
+        )
 
     if last_activity + SESSION_TOUCH_INTERVAL <= now:
         user_session.last_activity_at = now
@@ -265,7 +273,13 @@ def verify_login(
     user = session.scalar(select(User).where(func.lower(User.email) == normalized_email))
     stored_hash = user.password_hash if user and user.password_hash else DUMMY_PASSWORD_HASH
     password_matches = verify_password(stored_hash, password)
-    valid = bool(user and user.is_active and user.password_hash and password_matches)
+    valid = bool(
+        user
+        and user.is_system_admin
+        and user.is_active
+        and user.password_hash
+        and password_matches
+    )
     if not valid:
         session.query(AuthAttempt).filter(AuthAttempt.created_at < _utcnow() - timedelta(days=1)).delete(
             synchronize_session=False

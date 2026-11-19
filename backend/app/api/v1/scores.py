@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_station_access, require_system_admin
+from app.core.permissions import require_system_admin
 from app.db.models import (
     Event,
     EventParticipant,
@@ -187,39 +187,6 @@ def create_score_record(
         raise
     session.refresh(score)
     return _score_response(score)
-
-
-@router.post(
-    "/stations/{station_id}/participants/lookup",
-    summary="Найти участника на назначенной площадке",
-)
-def lookup_participant(
-    station_id: int,
-    payload: ParticipantLookup,
-    user: User = Depends(get_current_user),
-    session: Session = Depends(get_db),
-):
-    require_station_access(
-        session, user, station_id, {"station_operator"}
-    )
-    return lookup_participant_record(station_id, payload, session)
-
-
-@router.post(
-    "/stations/{station_id}/scores",
-    status_code=status.HTTP_201_CREATED,
-    summary="Выставить оценку на площадке",
-)
-def create_score(
-    station_id: int,
-    payload: ScoreCreate,
-    user: User = Depends(get_current_user),
-    session: Session = Depends(get_db),
-):
-    require_station_access(
-        session, user, station_id, {"station_operator"}
-    )
-    return create_score_record(station_id, payload, session)
 
 
 @router.patch("/scores/{score_id}", summary="Исправить оценку системным администратором")

@@ -188,7 +188,6 @@ a.action-card:hover { background: #eee8dc; }
 .code-scoring-controls > div { display: grid; gap: 6px; }
 .code-scoring-controls > div > strong { font-family: Georgia, serif; font-size: 20px; font-weight: 400; }
 .code-scoring-controls .scoring-scale { margin: 0 auto 0 0; }
-.staff-account-link { margin-top: 20px; padding: 0; }
 .registration-form { padding: 17px; border: 1px solid var(--line); background: var(--surface); }
 .registration-form label { flex: 1; }
 .registration-form input { width: 100%; }

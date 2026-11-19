@@ -14,7 +14,7 @@ from app.core.auth import (
 )
 from app.core.config import Settings, get_settings
 from app.core.passwords import is_valid_email, normalize_email
-from app.db.models import EventAccess, User
+from app.db.models import User
 from app.db.session import get_db
 
 
@@ -43,24 +43,12 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=12, max_length=1024)
 
 
-def account_response(user: User, session: Session) -> dict:
-    accesses = session.query(EventAccess).filter(EventAccess.user_id == user.id).order_by(
-        EventAccess.event_id, EventAccess.role, EventAccess.station_id
-    )
+def account_response(user: User) -> dict:
     return {
         "id": user.id,
         "email": user.email,
         "display_name": user.display_name,
         "is_system_admin": user.is_system_admin,
-        "access": [
-            {
-                "event_id": access.event_id,
-                "role": access.role,
-                "station_id": access.station_id,
-            }
-            for access in accesses
-            if access.role == "station_operator"
-        ],
     }
 
 
@@ -83,7 +71,7 @@ def login(
     if user is None:
         raise HTTPException(status_code=401, detail="Неверный email или пароль.")
     issue_user_session(response, user, session, settings)
-    return account_response(user, session)
+    return account_response(user)
 
 
 @router.get("/me")
@@ -91,7 +79,7 @@ def current_account(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    return account_response(user, session)
+    return account_response(user)
 
 
 @router.post("/logout")

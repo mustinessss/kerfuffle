@@ -61,11 +61,11 @@ Enter the administrator email and a password twice when prompted. The password
 must be at least 12 characters with lowercase, uppercase, and a digit. Then
 open `http://localhost:5173/login`.
 
-## Station-holder accounts and recovery
+## Access codes and administrator password recovery
 
-The system administrator creates station-holder invitations and assigns each
-account to its permitted stations at `http://localhost:5173/admin/users`. For
-real email delivery, configure
+The system administrator issues station-holder and registrar access codes in
+the workspace. Staff use the codes at `/score` and `/register`; they do not
+need personal accounts. For administrator password recovery, configure
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and
 `SMTP_USE_TLS` in `deploy/.env`, then recreate the backend:
 
@@ -73,14 +73,10 @@ real email delivery, configure
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --force-recreate backend
 ```
 
-Without SMTP, development mode shows invitation links only to a signed-in
-system administrator. The user-management page can also create a single-use
-password-reset link (30-minute expiry) for testing. This Compose package uses
-HTTP and is for local use only; do not expose it on a public IP. For a separate
-HTTPS production deployment, `MANUAL_AUTH_LINKS_ENABLED=true` allows system
-administrators to copy invitation and password-reset links for handoff through
-a trusted channel. Configure an externally reachable HTTPS `APP_PUBLIC_URL`;
-the links expire after 24 hours (invitations) or 30 minutes (password resets).
+The administrator password-recovery link is single-use and expires after 30
+minutes. This Compose package uses HTTP and is for local use only; do not expose
+it on a public IP. Production deployments must configure SMTP and an
+externally reachable HTTPS `APP_PUBLIC_URL`.
 
 ## Data and production
 
@@ -159,9 +155,8 @@ openssl rand -hex 32
 openssl rand -base64 48
 ```
 
-Do not reuse local secrets or the example values. Production must use SMTP for
-all four SMTP fields, or explicitly set `MANUAL_AUTH_LINKS_ENABLED=true` and
-have administrators hand out recovery links through a trusted channel.
+Do not reuse local secrets or the example values. Production must configure all
+SMTP fields to deliver administrator password-recovery emails.
 
 Generate and secure the PostgreSQL internal TLS files:
 

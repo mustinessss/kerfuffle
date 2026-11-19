@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.permissions import require_event_access, require_system_admin
-from app.db.models import Event, EventAccess, User
+from app.core.permissions import require_system_admin
+from app.db.models import Event, User
 from app.db.session import get_db
 
 
@@ -65,13 +65,8 @@ def list_events(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
+    require_system_admin(user)
     statement = select(Event).order_by(Event.event_date, Event.id)
-    if not user.is_system_admin:
-        statement = (
-            statement.join(EventAccess, EventAccess.event_id == Event.id)
-            .where(EventAccess.user_id == user.id)
-            .distinct()
-        )
     events = session.scalars(statement)
     return [event_response(event) for event in events]
 
@@ -124,6 +119,5 @@ def read_event(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found",
         )
-    if not user.is_system_admin:
-        require_event_access(session, user, event_id)
+    require_system_admin(user)
     return event_response(event)

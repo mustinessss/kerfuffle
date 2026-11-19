@@ -42,7 +42,7 @@ emails differ only by case, the migration stops; resolve those duplicates
 deliberately before retrying. Do not stamp an existing schema without comparing
 it to the migrations.
 
-## First administrator and staff accounts
+## System administrator and staff access
 
 After migrations are applied and `.env` points to the application database,
 create the first superuser interactively:
@@ -56,22 +56,17 @@ The CLI prompts for the email and password twice. Passwords must be at least
 stored as Argon2id hashes. The command refuses to create another initial
 superuser if one already exists.
 
-Sign in at `/login`. A system administrator can invite station holders from
-`/admin/users`; invited accounts receive access only after a station is
-explicitly assigned. Password recovery links expire after 30 minutes and are
-single-use.
+Sign in at `/login` with the system administrator account. Staff do not use
+personal accounts: the administrator issues event-scoped station-holder and
+registrar codes in `/workspace`. Password-recovery links for administrators
+expire after 30 minutes and are single-use.
 Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, and
-`SMTP_USE_TLS` to deliver invitations and recovery messages. Without SMTP,
-development mode returns invitation links only to an authenticated superuser;
-the same page can generate reset links for testing. Production requires SMTP
-unless `MANUAL_AUTH_LINKS_ENABLED=true`; with that explicit setting, only a
-system administrator can view and copy the one-time invitation or reset link
-for delivery through a trusted channel. SMTP takes precedence when configured,
-and the link is not shown in the admin UI.
+`SMTP_USE_TLS` to deliver administrator password-recovery messages. Production
+requires SMTP; there is no staff invitation or manual-link workflow.
 
-Legacy OIDC subject values are retained for migration/history only and are not
-accepted for login. Existing users should be matched and activated by their
-email when invited or when the initial administrator is created. Event and
+Legacy OIDC subject values, invitation rows, and employee account/access rows
+are retained for migration/history compatibility, but employee accounts are
+not accepted for login. Staff authenticate using access codes. Event and
 participant data remain in the existing PostgreSQL database.
 
 ## Production minimum
@@ -129,16 +124,17 @@ Important endpoints:
   `/api/v1/auth/logout`, `/api/v1/auth/change-password`
 - Request/complete password reset: `/api/v1/public/password-reset/request`,
   `/api/v1/public/password-reset/complete`
-- Superuser user/invitation management: `/api/v1/system-admin/users`,
-  `/api/v1/system-admin/invitations`
+- Staff do not use accounts; station holders and registrars authenticate with
+  event access codes. Only system administrators use email/password accounts.
 - Events: `/api/v1/events`
 - Stations: `/api/v1/events/{event_id}/stations`
 - Route sheets (system administrator): `/api/v1/events/{event_id}/route-sheets`,
   `/api/v1/route-sheets/{route_sheet_id}`
 - People search: `/api/v1/people?event_id={event_id}&query={name}`
 - Participants: `/api/v1/events/{event_id}/participants`
-- Participant lookup: `POST /api/v1/stations/{station_id}/participants/lookup`
-- Submit score: `POST /api/v1/stations/{station_id}/scores`
+- Participant lookup and score submission use the staff-code endpoints:
+  `/api/v1/public/access/participant-lookup`,
+  `/api/v1/public/access/scores`
 - Correct/annul score: `/api/v1/scores/{score_id}`
 - Public events and leaderboards:
   `/api/v1/public/events`,

@@ -1,24 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 import {
-  acceptAccountInvitation,
   completePasswordReset,
-  createManualPasswordResetLink,
-  getAdminInvitations,
-  getAdminUsers,
-  getEvents,
-  getStations,
-  inviteStaffAccount,
   requestPasswordReset,
-  resendInvitation,
-  revokeInvitation,
-  setUserStationAccess,
-  setUserBlocked,
 } from "./api";
-import type { AdminInvitation, AdminUser, EventSummary, StationSummary } from "./api";
 import { ApiError } from "./api";
 import { useAuth } from "./authContext";
-import { CopyLink } from "./CopyLink";
 
 function messageFor(error: unknown): string {
   return error instanceof ApiError
@@ -44,7 +31,7 @@ export function LoginPage() {
       <div className="workspace-heading">
         <p className="eyebrow">ЗАЩИЩЁННЫЙ ДОСТУП</p>
         <h1>Вход<span className="accent-dot">.</span></h1>
-        <p>Войдите в кабинет держателя площадки или системного администратора.</p>
+        <p>Войдите как системный администратор.</p>
       </div>
       {loading
         ? <div className="state-box" role="status"><span className="spinner" />Проверяем сессию…</div>
@@ -87,63 +74,6 @@ export function LoginForm() {
   );
 }
 
-export function InvitationPage() {
-  const token = new URLSearchParams(window.location.search).get("token") ?? "";
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const password = String(form.get("password") ?? "");
-    const confirmation = String(form.get("confirmation") ?? "");
-    if (password !== confirmation) {
-      setError("Пароли не совпадают.");
-      return;
-    }
-    if (!passwordMatchesPolicy(password)) {
-      setError("Нужен пароль от 12 символов со строчными и заглавными буквами и цифрой.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      await acceptAccountInvitation({
-        token,
-        display_name: String(form.get("displayName") ?? "").trim(),
-        password,
-      });
-      setSuccess("Аккаунт активирован. Теперь можно войти.");
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <main className="workspace-page">
-      <div className="workspace-heading">
-        <p className="eyebrow">АКТИВАЦИЯ АККАУНТА</p>
-        <h1>Приглашение<span className="accent-dot">.</span></h1>
-        <p>Создайте пароль учётной записи держателя площадки. Ссылка одноразовая и действует ограниченное время.</p>
-      </div>
-      {success
-        ? <div className="workspace-card"><p className="success-message">{success}</p><a className="primary-button" href="/login">Перейти ко входу</a></div>
-        : token
-          ? <form className="workspace-card workspace-form login-form" onSubmit={(event) => void submit(event)}>
-              <label>Имя<input name="displayName" required maxLength={200} autoComplete="name" /></label>
-              <label>Пароль<input name="password" type="password" required minLength={12} autoComplete="new-password" /></label>
-              <label>Повторите пароль<input name="confirmation" type="password" required minLength={12} autoComplete="new-password" /></label>
-              <ErrorMessage>{error}</ErrorMessage>
-              <button className="primary-button" disabled={saving}>{saving ? "Активируем…" : "Создать аккаунт"}</button>
-            </form>
-          : <div className="state-box error-box" role="alert">В ссылке нет токена приглашения. Попросите администратора отправить новое приглашение.</div>}
-    </main>
-  );
-}
-
 export function ForgotPasswordPage() {
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -168,7 +98,7 @@ export function ForgotPasswordPage() {
     <main className="workspace-page">
       <div className="workspace-heading"><p className="eyebrow">ВОССТАНОВЛЕНИЕ ДОСТУПА</p><h1>Сброс пароля<span className="accent-dot">.</span></h1></div>
       {submitted
-        ? <div className="workspace-card">Если активный аккаунт с таким email существует, инструкция по сбросу будет отправлена на него. Если письмо не пришло, обратитесь к системному администратору.</div>
+        ? <div className="workspace-card">Если активная учётная запись администратора с таким email существует, инструкция по сбросу будет отправлена на него. Если письмо не пришло, обратитесь к системному администратору.</div>
         : <form className="workspace-card workspace-form login-form" onSubmit={(event) => void submit(event)}>
             <label>Email<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
             <ErrorMessage>{error}</ErrorMessage>
@@ -221,199 +151,6 @@ export function ResetPasswordPage() {
               <button className="primary-button" disabled={saving}>{saving ? "Сохраняем…" : "Сохранить пароль"}</button>
             </form>
           : <div className="state-box error-box" role="alert">В ссылке отсутствует токен сброса пароля.</div>}
-    </main>
-  );
-}
-
-export function AdminUsersPage() {
-  const { user } = useAuth();
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [invitations, setInvitations] = useState<AdminInvitation[]>([]);
-  const [events, setEvents] = useState<EventSummary[]>([]);
-  const [stationsByEvent, setStationsByEvent] = useState<Record<number, StationSummary[]>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [inviteUrl, setInviteUrl] = useState("");
-  const [resetUrl, setResetUrl] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  async function refresh() {
-    const [nextUsers, nextInvitations, nextEvents] = await Promise.all([
-      getAdminUsers(),
-      getAdminInvitations(),
-      getEvents(),
-    ]);
-    const stationLists = await Promise.all(
-      nextEvents.map(async (event) => [event.id, await getStations(event.id, "")] as const),
-    );
-    setUsers(nextUsers);
-    setInvitations(nextInvitations);
-    setEvents(nextEvents);
-    setStationsByEvent(Object.fromEntries(stationLists));
-  }
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([getAdminUsers(), getAdminInvitations(), getEvents()])
-      .then(async ([nextUsers, nextInvitations, nextEvents]) => {
-        if (!active) return;
-        const stationLists = await Promise.all(
-          nextEvents.map(async (event) => [event.id, await getStations(event.id, "")] as const),
-        );
-        if (!active) return;
-        setUsers(nextUsers);
-        setInvitations(nextInvitations);
-        setEvents(nextEvents);
-        setStationsByEvent(Object.fromEntries(stationLists));
-      })
-      .catch((requestError: unknown) => {
-        if (active) setError(messageFor(requestError));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
-  }, []);
-
-  if (!user?.is_system_admin) {
-    return <main className="workspace-page"><div className="workspace-heading"><h1>Пользователи<span className="accent-dot">.</span></h1></div><div className="state-box error-box">Раздел доступен только системному администратору.</div></main>;
-  }
-
-  async function submitInvitation(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    setSaving(true);
-    setError("");
-    setMessage("");
-    setInviteUrl("");
-    setResetUrl("");
-    try {
-      const invitation = await inviteStaffAccount(String(new FormData(form).get("email") ?? "").trim());
-      setInviteUrl(invitation.invitation_url ?? "");
-      setMessage(invitation.delivery_method === "email"
-        ? `Приглашение отправлено по email: ${invitation.email}.`
-        : `Создана ссылка-приглашение для ${invitation.email}.`);
-      form.reset();
-      await refresh();
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function runAction(action: () => Promise<unknown>, success: string) {
-    setError("");
-    setMessage("");
-    setInviteUrl("");
-    setResetUrl("");
-    try {
-      await action();
-      setMessage(success);
-      await refresh();
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    }
-  }
-
-  async function resendAccountInvitation(invitationId: number) {
-    setError("");
-    setMessage("");
-    setInviteUrl("");
-    setResetUrl("");
-    try {
-      const invitation = await resendInvitation(invitationId);
-      setInviteUrl(invitation.invitation_url ?? "");
-      setMessage(invitation.delivery_method === "email"
-        ? `Новое приглашение отправлено по email: ${invitation.email}.`
-        : `Создана новая ссылка-приглашение для ${invitation.email}.`);
-      await refresh();
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    }
-  }
-
-  async function createResetLink(account: AdminUser) {
-    setError("");
-    setMessage("");
-    setInviteUrl("");
-    setResetUrl("");
-    try {
-      const result = await createManualPasswordResetLink(account.id);
-      setResetUrl(result.reset_url);
-      setMessage(`Создана ссылка сброса пароля для ${account.email}.`);
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    }
-  }
-
-  return (
-    <main className="workspace-page">
-      <div className="workspace-heading"><p className="eyebrow">АДМИНИСТРИРОВАНИЕ</p><h1>Пользователи<span className="accent-dot">.</span></h1><p>Приглашайте держателей площадок и назначайте доступ только к нужным площадкам.</p></div>
-      {loading && <div className="state-box" role="status"><span className="spinner" />Загружаем пользователей…</div>}
-      <ErrorMessage>{error}</ErrorMessage>
-      {message && <p className="success-message" role="status">{message}</p>}
-      {inviteUrl && <div className="workspace-card credential-card"><strong>Ссылка для приглашения</strong><p>Одноразовая ссылка действует 24 часа. Передавайте её получателю по доверенному каналу.</p><CopyLink url={inviteUrl} /></div>}
-      {resetUrl && <div className="workspace-card credential-card"><strong>Ссылка сброса пароля</strong><p>Одноразовая ссылка действует 30 минут. Передавайте её только владельцу аккаунта по доверенному каналу.</p><CopyLink url={resetUrl} /></div>}
-      <form className="workspace-card workspace-form event-create-form" onSubmit={(event) => void submitInvitation(event)}>
-        <h3>Пригласить держателя площадки</h3>
-        <label>Email<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
-        <button className="primary-button" disabled={saving}>{saving ? "Создаём приглашение…" : "Создать приглашение"}</button>
-      </form>
-      <section className="workspace-section">
-        <div className="workspace-section-heading"><div><p className="eyebrow">УЧЁТНЫЕ ЗАПИСИ</p><h2>Пользователи</h2></div></div>
-        {users.map((account) => (
-          <article className="workspace-card admin-user-card" key={account.id}>
-            <div className="admin-user-heading"><div><strong>{account.display_name}</strong><span>{account.email ?? "Без email"}</span></div><span>{account.is_system_admin ? "Системный администратор" : account.is_active ? "Активен" : "Заблокирован"}</span></div>
-            {!account.is_system_admin && <button className="quiet-button" onClick={() => void runAction(() => setUserBlocked(account.id, account.is_active), account.is_active ? "Пользователь заблокирован." : "Пользователь разблокирован.")}>{account.is_active ? "Заблокировать" : "Разблокировать"}</button>}
-            {!account.is_system_admin && account.is_active && <button className="quiet-button" onClick={() => void createResetLink(account)}>Создать ссылку сброса</button>}
-            {!account.is_system_admin && (
-              <div className="admin-event-assignments">
-                <span>Доступ к площадкам</span>
-                {events.map((event) => {
-                  const stations = stationsByEvent[event.id] ?? [];
-                  return (
-                    <div className="admin-event-assignments" key={event.id}>
-                      <strong>{event.name}</strong>
-                      {stations.length === 0 && <span>Нет площадок</span>}
-                      {stations.map((station) => {
-                        const assigned = account.events.some(
-                          (access) => access.event_id === event.id && access.station_id === station.id,
-                        );
-                        return (
-                          <label key={station.id}>
-                            <input
-                              type="checkbox"
-                              checked={assigned}
-                              onChange={(change) => void runAction(
-                                () => setUserStationAccess(account.id, event.id, station.id, change.target.checked),
-                                "Назначения обновлены.",
-                              )}
-                            />
-                            {station.name}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-        ))}
-      </section>
-      <section className="workspace-section">
-        <div className="workspace-section-heading"><div><p className="eyebrow">ПРИГЛАШЕНИЯ</p><h2>История приглашений</h2></div></div>
-        {invitations.map((invitation) => (
-          <article className="workspace-card admin-user-card" key={invitation.id}>
-            <div className="admin-user-heading"><div><strong>{invitation.email}</strong><span>Действует до {new Date(invitation.expires_at).toLocaleString()}</span></div><span>{invitation.status}</span></div>
-            {invitation.status !== "used" && invitation.status !== "revoked" && <button className="quiet-button" onClick={() => void runAction(() => revokeInvitation(invitation.id), "Приглашение отозвано.")}>Отозвать</button>}
-            {(invitation.status === "expired" || invitation.status === "revoked") &&             <button className="quiet-button" onClick={() => void resendAccountInvitation(invitation.id)}>Создать новое приглашение</button>}
-          </article>
-        ))}
-        {!invitations.length && !loading && <p className="empty-workspace">Приглашений пока нет.</p>}
-      </section>
     </main>
   );
 }
