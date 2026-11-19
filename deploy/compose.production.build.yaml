@@ -21,11 +21,22 @@ services:
       context: ../backend
       dockerfile: Dockerfile
 
-  frontend:
-    image: kerfuffle-frontend:local
+  frontend-public:
+    image: kerfuffle-frontend-public:local
     pull_policy: build
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      target: frontend-public
+      args:
+        VITE_API_BASE_URL: /api/v1
+
+  frontend-admin:
+    image: kerfuffle-frontend-admin:local
+    pull_policy: build
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      target: frontend-admin
       args:
         VITE_API_BASE_URL: /api/v1

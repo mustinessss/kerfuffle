@@ -18,6 +18,8 @@ def production_settings(**overrides):
         "smtp_user": "kerfuffle",
         "smtp_password": "smtp-secret",
         "smtp_from": "noreply@example.test",
+        "public_proxy_ip": "172.29.0.2",
+        "private_proxy_ip": "172.30.0.2",
     }
     values.update(overrides)
     return Settings(**values)
@@ -42,6 +44,19 @@ def test_production_rejects_partial_smtp_configuration():
         production_settings(
             smtp_host=None,
         )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"public_proxy_ip": None},
+        {"private_proxy_ip": "not-an-ip"},
+        {"private_proxy_ip": "172.29.0.2"},
+    ],
+)
+def test_production_requires_distinct_valid_ingress_proxy_ips(overrides):
+    with pytest.raises(ValidationError, match="PUBLIC_PROXY_IP|PRIVATE_PROXY_IP"):
+        production_settings(**overrides)
 
 
 @pytest.mark.parametrize(

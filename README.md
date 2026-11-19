@@ -6,7 +6,8 @@
 ## Состав проекта
 
 - `backend/` — FastAPI, PostgreSQL, Alembic и встроенная авторизация.
-- `frontend/` — React/Vite/TypeScript: публичный рейтинг и рабочие кабинеты.
+- `frontend/` — React/Vite/TypeScript: публичная регистрация/начисление и
+  закрытое рабочее пространство администратора.
 - `database/` — исторический SQL-снимок и SQL для ограниченной runtime-роли
   PostgreSQL. Актуальная структура БД управляется только миграциями Alembic.
 - `deploy/` — локальный Docker Compose-пакет для переноса на Windows-машину
@@ -50,7 +51,9 @@ LTS. Инструкции по созданию базы, установке з�
 Для публичного Linux VPS используйте отдельную пошаговую инструкцию:
 [Развёртывание Kerfuffle на Linux VPS](./deploy/INSTALL-LINUX.md).
 
-Production использует `deploy/compose.production.yaml`, Caddy и HTTPS.
-Локальный `deploy/compose.yaml` не предназначен для публикации в интернете.
-Храните production secrets вне системы контроля версий и не открывайте наружу
-порты PostgreSQL и backend.
+Production использует `deploy/compose.production.yaml` и отдельные входы:
+публичный сайт только для регистрации/начисления и закрытый административный
+интерфейс через LAN/VPN на HTTPS-порту 8443. Администраторские API и рейтинги
+недоступны через публичный адрес. Локальный `deploy/compose.yaml` не
+предназначен для публикации в интернете. Храните production secrets вне
+системы контроля версий и не открывайте наружу порты PostgreSQL и backend.

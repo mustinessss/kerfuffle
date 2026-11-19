@@ -31,6 +31,25 @@ export interface LeaderboardResponse {
   participants: LeaderboardParticipant[];
 }
 
+export interface StationLeaderboardResponse {
+  event: {
+    id: number;
+    name: string;
+    event_date: string;
+  };
+  station: {
+    id: number;
+    name: string;
+    score_max: number;
+  };
+  participants: Array<{
+    registration_number: string;
+    place: number;
+    points: number;
+    has_score: boolean;
+  }>;
+}
+
 export interface CurrentAccount {
   id: number;
   email: string | null;
@@ -44,10 +63,6 @@ export interface EventSummary {
   event_date: string;
 }
 
-export interface PublicEventSummary extends EventSummary {
-  route_sheets: Array<{ id: number; name: string }>;
-}
-
 export interface StationSummary {
   id: number;
   event_id: number;
@@ -55,6 +70,7 @@ export interface StationSummary {
   score_min: number;
   score_max: number;
   score_step: number;
+  rating_mode: "main" | "separate";
 }
 
 export interface RouteSheetSummary {
@@ -219,11 +235,7 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   }
 }
 
-export function getPublicEvents(signal?: AbortSignal) {
-  return requestJson<PublicEventSummary[]>("/public/events", { signal });
-}
-
-export function getPublicLeaderboard(
+export function getEventLeaderboard(
   eventId: number,
   routeSheetId?: number,
   signal?: AbortSignal,
@@ -232,7 +244,18 @@ export function getPublicLeaderboard(
     ? ""
     : `?route_sheet_id=${encodeURIComponent(routeSheetId)}`;
   return requestJson<LeaderboardResponse>(
-    `/public/events/${encodeURIComponent(eventId)}/leaderboard${query}`,
+    `/events/${encodeURIComponent(eventId)}/leaderboard${query}`,
+    { signal },
+  );
+}
+
+export function getStationLeaderboard(
+  eventId: number,
+  stationId: number,
+  signal?: AbortSignal,
+) {
+  return requestJson<StationLeaderboardResponse>(
+    `/events/${encodeURIComponent(eventId)}/stations/${encodeURIComponent(stationId)}/leaderboard`,
     { signal },
   );
 }
@@ -296,7 +319,7 @@ export function getStations(eventId: number, accessToken: string, signal?: Abort
 export function createStation(
   eventId: number,
   accessToken: string,
-  payload: Pick<StationSummary, "name" | "score_min" | "score_max" | "score_step">,
+  payload: Pick<StationSummary, "name" | "score_min" | "score_max" | "score_step" | "rating_mode">,
 ) {
   return requestJson<StationSummary>(`/events/${eventId}/stations`, {
     accessToken,
@@ -390,7 +413,7 @@ export function submitScoreWithAccessCode(
 export function updateStation(
   stationId: number,
   accessToken: string,
-  payload: Partial<Pick<StationSummary, "name" | "score_min" | "score_max" | "score_step">>,
+  payload: Partial<Pick<StationSummary, "name" | "score_min" | "score_max" | "score_step" | "rating_mode">>,
 ) {
   return requestJson<StationSummary>(`/stations/${stationId}`, {
     accessToken,

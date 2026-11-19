@@ -1,6 +1,7 @@
 # Развёртывание Kerfuffle на Linux VPS
 
-Это production-инструкция для публичного сервера. Она рассчитана на Ubuntu
+Это production-инструкция для Linux VPS с отдельными публичным и
+административным входами. Она рассчитана на Ubuntu
 22.04/24.04 LTS и актуальную ветку `main`. Для другого Linux-дистрибутива
 команды установки Docker и настройки firewall могут отличаться.
 
@@ -13,14 +14,19 @@
 
 - Linux VPS с публичным IPv4. Минимум 2 GB RAM; для более комфортной работы
   рекомендуется начать с 2 vCPU, 4 GB RAM и 30–40 GB SSD.
-- Домен или поддомен, например `kerfuffle.example.com`.
+- Публичный домен, например `kerfuffle.example.com`.
+- Private DNS-имя для администратора, например `kerfuffle-admin.internal`,
+  разрешаемое только из LAN/VPN.
 - Возможность изменить DNS-записи домена.
 - SSH-доступ к VPS с пользователем, имеющим `sudo`.
 - Открытые входящие TCP-порты 80 и 443. UDP 443 можно открыть для HTTP/3.
+- LAN/VPN-интерфейс и разрешённый CIDR для административного TCP-порта 8443.
 
-Production-конфигурация рассчитана на доменное имя и автоматический HTTPS
-через Caddy/Let's Encrypt. **Запуск только по голому публичному IP штатно не
-настроен**: сначала направьте домен на IP сервера.
+Публичный домен использует HTTPS через Caddy/Let's Encrypt. Административный
+интерфейс с рейтингами доступен только из доверенной LAN/VPN-сети через
+отдельный Caddy на порту 8443 и внутренний TLS-сертификат. **Запуск только по
+голому публичному IP штатно не настроен**: сначала направьте публичный домен
+на IP сервера.
 
 ## 2. Подготовьте DNS
 
@@ -48,6 +54,10 @@ getent ahostsv4 kerfuffle.example.com
 
 В выводе должен присутствовать IPv4 вашего VPS. Если DNS ещё не обновился,
 дождитесь распространения записи до продолжения.
+
+Настройте private DNS-запись для `ADMIN_DOMAIN`, указывающую на private/VPN
+адрес сервера. Это имя не должно разрешаться на публичный адрес, если доступ
+администраторов предназначен только для LAN/VPN.
 
 ## 3. Установите Docker Engine и Compose
 
@@ -84,6 +94,7 @@ sudo ufw allow OpenSSH
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 443/udp
+sudo ufw allow from 10.66.0.0/24 to any port 8443 proto tcp
 sudo ufw status
 ```
 
@@ -95,8 +106,10 @@ sudo ufw status verbose
 ```
 
 Также проверьте firewall/security group в панели VPS-провайдера. Разрешите
-входящие TCP 80 и 443 (и UDP 443, если нужен HTTP/3). **Не открывайте наружу**
-порты PostgreSQL 5432 и backend 8000: они доступны только внутри Docker-сети.
+входящие TCP 80 и 443 (и UDP 443, если нужен HTTP/3); 8443 разрешайте только
+для фактического CIDR LAN/VPN. Замените `10.66.0.0/24` на свою VPN-сеть.
+**Не открывайте наружу** порты PostgreSQL 5432 и backend 8000, и не
+публикуйте 8443 для всего интернета.
 
 ## 5. Скачайте проект
 
@@ -127,10 +140,17 @@ chmod 0600 deploy/.env.production
 
 - `APP_DOMAIN` — домен без `https://`, например
   `kerfuffle.example.com`.
-- `APP_PUBLIC_URL` — полный адрес, например
-  `https://kerfuffle.example.com`.
-- `APP_ALLOWED_ORIGINS` — тот же origin:
-  `https://kerfuffle.example.com`.
+- `ADMIN_DOMAIN` — private DNS-имя, например `kerfuffle-admin.internal`.
+- `ADMIN_BIND_IP` — IP LAN/VPN-интерфейса сервера. Значение `127.0.0.1`
+  оставляет админку доступной только локально; для прямого доступа по VPN
+  задайте адрес VPN-интерфейса.
+- `ADMIN_ALLOWED_CIDRS` — один или несколько CIDR LAN/VPN, разрешённых для
+  административного входа, например `10.66.0.0/24`.
+- `APP_PUBLIC_URL` — административный HTTPS origin:
+  `https://kerfuffle-admin.internal:8443`. Ссылка сброса пароля администратора
+  будет вести на этот private адрес.
+- `APP_ALLOWED_ORIGINS` — оба origin, через запятую:
+  `https://kerfuffle.example.com,https://kerfuffle-admin.internal:8443`.
 - `POSTGRES_PASSWORD` — отдельный случайный пароль суперпользователя БД.
 - `APP_DB_PASSWORD` — другой случайный пароль runtime-пользователя приложения.
 - `ACCESS_CODE_HASH_SECRET` — отдельный случайный секрет не короче 32 символов.
@@ -190,9 +210,10 @@ sudo rm -f deploy/postgres-tls/ca.key
 
 ## 8. Получите готовые Linux-образы и запустите приложение
 
-Образы backend и frontend собираются GitHub Actions на Linux runner и
-публикуются в GitHub Container Registry (GHCR). VPS не собирает исходники:
-он только скачивает готовые `linux/amd64` образы. Публикация запускается
+Образы backend, публичного frontend и административного frontend собираются
+GitHub Actions на Linux runner и публикуются в GitHub Container Registry
+(GHCR). VPS не собирает исходники: он только скачивает готовые `linux/amd64`
+образы. Публикация запускается
 автоматически после push изменений backend/frontend в `main`, а также может
 быть запущена вручную во вкладке **Actions → Publish Linux images → Run
 workflow**.
@@ -200,9 +221,10 @@ workflow**.
 Перед первым запуском откройте в репозитории GitHub раздел **Actions** и
 убедитесь, что workflow **Publish Linux images** завершился успешно. Затем
 откройте профиль владельца GitHub → **Packages** и проверьте пакеты
-`kerfuffle-backend` и `kerfuffle-frontend`. Для простого развёртывания на VPS
-рекомендуется установить обоим пакетам видимость **Public** (Package settings
-→ Change visibility). Публичные образы можно скачивать без токена. Если
+`kerfuffle-backend`, `kerfuffle-frontend-public` и
+`kerfuffle-frontend-admin`. Для простого развёртывания на VPS рекомендуется
+установить пакетам видимость **Public** (Package settings → Change visibility).
+Публичные образы можно скачивать без токена. Если
 оставить пакеты Private, перед `docker compose pull` нужно выполнить вход в
 GHCR с токеном GitHub, имеющим только `read:packages`:
 
@@ -259,24 +281,51 @@ sudo docker compose --env-file deploy/.env.production \
   python -m alembic current
 ```
 
-В текущей версии ожидаемая голова миграций — `0008_route_sheets`. Если миграция
+В текущей версии ожидаемая голова миграций — `0013_station_rating_modes`.
+Если миграция
 завершилась ошибкой, не продолжайте настройку и не пытайтесь исправить ситуацию
 через `alembic downgrade`: сначала разберите ошибку и сохраните данные.
 
-## 9. Проверьте HTTPS и создайте первого администратора
+## 9. Проверьте публичный и административный входы
 
-Caddy автоматически запросит и будет продлевать сертификат Let's Encrypt.
-Для выпуска сертификата домен должен указывать на VPS, а TCP 80 и 443 должны
-быть доступны из интернета.
+Caddy автоматически запросит и будет продлевать публичный сертификат
+Let's Encrypt. Для этого публичный домен должен указывать на VPS, а TCP 80 и
+443 должны быть доступны из интернета.
 
-Проверьте сайт и API:
+Проверьте публичные страницы:
 
 ```bash
-curl -I https://kerfuffle.example.com
-curl -fsS https://kerfuffle.example.com/api/v1/health
+curl -I https://kerfuffle.example.com/register
+curl -I https://kerfuffle.example.com/score
 ```
 
-Замените домен на свой. Health endpoint должен ответить успешно.
+Публичный адрес предоставляет только регистрацию и начисление. Проверяйте
+health backend из контейнера:
+
+```bash
+sudo docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yaml exec backend \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status)"
+```
+
+Для административной зоны настройте private DNS `ADMIN_DOMAIN`, привяжите
+порт 8443 к IP LAN/VPN-интерфейса через `ADMIN_BIND_IP` и убедитесь, что
+firewall разрешает 8443 только доверенным CIDR. Установите внутренний
+корневой сертификат Caddy на устройства администраторов; после запуска его
+можно получить командой:
+
+```bash
+sudo docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yaml cp \
+  admin-caddy:/data/caddy/pki/authorities/local/root.crt \
+  ./kerfuffle-admin-root.crt
+```
+
+Безопасно доставьте этот публичный CA-сертификат администраторам и добавьте
+его в системное хранилище доверенных CA. Не копируйте и не распространяйте
+приватный ключ CA из Docker volume. Затем откройте
+`https://ADMIN_DOMAIN:8443/login` из LAN/VPN и проверьте, что извне этого
+диапазона порт недоступен.
 
 Создайте первого системного администратора:
 
@@ -291,10 +340,11 @@ CLI запросит email и пароль. Пароль должен быть �
 откройте:
 
 ```
-https://kerfuffle.example.com/login
+https://kerfuffle-admin.internal:8443/login
 ```
 
-Войдите под созданной учётной записью. Держателям площадок и регистраторам
+Замените имя на значение `ADMIN_DOMAIN`. Войдите под созданной учётной записью.
+Держателям площадок и регистраторам
 администратор выдаёт коды доступа в рабочем пространстве; отдельные аккаунты
 сотрудников не создаются.
 
@@ -314,8 +364,8 @@ https://kerfuffle.example.com/login
 6. Проверьте исправление/аннулирование начисления администратором и журнал
    изменений с причиной.
 7. Проверьте общий и групповой рейтинги, включая нулевые результаты и ничьи.
-8. Проверьте вход с телефонов через мобильную сеть, а не только из локальной
-   сети VPS.
+8. Убедитесь, что публичный адрес не показывает вход, рейтинги и
+   административные API; проверьте их доступность только из LAN/VPN.
 
 После теста удаляйте тестовые данные только предусмотренными средствами
 приложения и убедитесь, что не затрагиваете реальные данные.
@@ -374,9 +424,10 @@ sudo docker compose --env-file deploy/.env.production \
 скачивает новые Linux-образы из GHCR, а `up -d` применяет обновление. База
 данных и её Docker volume при этом сохраняются.
 
-Проверьте логи миграций и endpoint `/api/v1/health` после обновления. Не
-применяйте обновление, если в рабочей копии есть незакоммиченные изменения,
-которые вы не понимаете. Не запускайте `alembic downgrade`.
+Проверьте логи миграций, health backend из контейнера и доступность
+административного ingress из LAN/VPN после обновления. Не применяйте
+обновление, если в рабочей копии есть незакоммиченные изменения, которые вы не
+понимаете. Не запускайте `alembic downgrade`.
 
 ## 13. Остановка и диагностика
 
@@ -404,13 +455,15 @@ sudo docker compose --env-file deploy/.env.production \
   -f deploy/compose.production.yaml ps
 
 sudo docker compose --env-file deploy/.env.production \
-  -f deploy/compose.production.yaml logs --tail=200 caddy backend db migrate
+  -f deploy/compose.production.yaml logs --tail=200 caddy admin-caddy backend db migrate
 
 sudo docker compose --env-file deploy/.env.production \
   -f deploy/compose.production.yaml exec db \
   pg_isready -U postgres -d kerfuffle
 
-curl -fsS https://kerfuffle.example.com/api/v1/health
+sudo docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yaml exec backend \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status)"
 ```
 
 Частые причины проблем:
@@ -428,27 +481,28 @@ curl -fsS https://kerfuffle.example.com/api/v1/health
   SMTP-параметры, пароль SMTP и логи backend. Сотрудники используют коды
   доступа и не получают приглашения по email.
 
-Для внешнего мониторинга настройте HTTPS-проверку
-`/api/v1/health`. Не публикуйте содержимое `.env.production`, пароли,
-коды доступа, приватные ключи и дампы базы в тикетах или логах.
+Публичный `/api/v1/health` намеренно недоступен. Проверяйте здоровье backend
+изнутри Compose или через закрытый административный ingress. Не публикуйте
+содержимое `.env.production`, пароли, коды доступа, приватные ключи и дампы
+базы в тикетах или логах.
 
 ## Схема production-развёртывания
 
-Из интернета доступны только Caddy на TCP 80/443 (UDP 443 — опционально).
-Caddy маршрутизирует запросы к frontend и backend внутри приватной Docker-сети.
-PostgreSQL и backend не имеют опубликованных host-портов.
+Из интернета доступны public Caddy на TCP 80/443 (UDP 443 — опционально) и
+только публичные формы регистрации/начисления. Отдельный admin Caddy на TCP
+8443 привязан к LAN/VPN адресу и фильтрует клиентов по CIDR. Backend разрешает
+public proxy только точный allowlist API; админские API доступны только через
+private proxy. PostgreSQL и backend не имеют опубликованных host-портов.
 
 ```text
-Пользователь / браузер
-        |
-        | HTTPS :443 (HTTP :80 -> HTTPS)
-        v
-      Caddy
-       /  \
-      /    \
- frontend  backend :8000
-               |
-               | TLS внутри Docker-сети
-               v
-         PostgreSQL :5432
+Публичный браузер -- HTTPS :443 --> public Caddy
+                                      |-- public frontend (register / score)
+                                      `-- allowlisted public API
+
+Администратор в LAN/VPN -- HTTPS :8443 --> admin Caddy (internal TLS, CIDR)
+                                             |-- admin frontend (ratings / management)
+                                             `-- private API
+                                                    |
+                                                    v
+                                        backend :8000 -- TLS --> PostgreSQL :5432
 ```

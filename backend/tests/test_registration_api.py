@@ -83,6 +83,7 @@ def test_admin_creates_station_and_regular_users_cannot_list_it(
         "score_min": 0,
         "score_max": 10,
         "score_step": 2,
+        "rating_mode": "main",
     }
     with pytest.raises(HTTPException):
         list_stations(event_record.id, registrar, db_session)
@@ -99,7 +100,6 @@ def test_only_system_admin_can_create_or_update_stations(db_session, event_team)
             db_session,
         )
     assert error.value.status_code == 403
-
     station = Station(
         event_id=event_record.id,
         name="Stage",
@@ -117,6 +117,47 @@ def test_only_system_admin_can_create_or_update_stations(db_session, event_team)
             db_session,
         )
     assert error.value.status_code == 403
+
+
+def test_station_rating_mode_defaults_to_main_and_can_be_changed(
+    db_session, event_team
+):
+    event_record, admin, _, _ = event_team
+    created = create_station(
+        event_record.id,
+        StationCreate(
+            name="Bonus",
+            score_min=0,
+            score_max=10,
+            score_step=2,
+            rating_mode="separate",
+        ),
+        admin,
+        db_session,
+    )
+    updated = update_station(
+        created["id"],
+        StationUpdate(rating_mode="main"),
+        admin,
+        db_session,
+    )
+
+    assert created["rating_mode"] == "separate"
+    assert updated["rating_mode"] == "main"
+
+
+def test_station_rating_mode_rejects_unknown_values():
+    with pytest.raises(ValidationError):
+        StationCreate(
+            name="Bonus",
+            score_min=0,
+            score_max=10,
+            score_step=2,
+            rating_mode="other",
+        )
+
+    with pytest.raises(ValidationError):
+        StationUpdate(rating_mode="other")
 
 
 def test_employee_account_cannot_list_stations(db_session, event_team):

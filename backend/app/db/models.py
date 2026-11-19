@@ -176,6 +176,10 @@ class Station(Base):
             "AND (score_max - score_min) % score_step = 0",
             name="stations_valid_score_scale",
         ),
+        CheckConstraint(
+            "rating_mode IN ('main', 'separate')",
+            name="stations_valid_rating_mode",
+        ),
         CheckConstraint("btrim(name) <> ''", name="stations_name_not_empty"),
     )
 
@@ -187,6 +191,9 @@ class Station(Base):
     score_min: Mapped[int] = mapped_column(Integer, nullable=False)
     score_max: Mapped[int] = mapped_column(Integer, nullable=False)
     score_step: Mapped[int] = mapped_column(Integer, nullable=False)
+    rating_mode: Mapped[str] = mapped_column(
+        Text, nullable=False, default="main", server_default=text("'main'")
+    )
 
 
 class RouteSheet(Base):

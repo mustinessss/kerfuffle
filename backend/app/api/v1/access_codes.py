@@ -23,6 +23,7 @@ from app.api.v1.participants import ParticipantCreate, register_participant_reco
 from app.api.v1.route_sheets import list_route_sheets_for_event
 from app.core.auth import get_current_user
 from app.core.config import Settings, get_settings
+from app.core.network_access import effective_client_ip
 from app.core.permissions import require_system_admin
 from app.db.models import (
     AccessCode,
@@ -299,7 +300,7 @@ def verify_access_code(
     settings: Settings = Depends(get_settings),
 ):
     secret = _required_secret(settings)
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = effective_client_ip(request, settings)
     ip_hash = _secret_hash(client_ip, secret)
     now = datetime.now(UTC)
     session.execute(

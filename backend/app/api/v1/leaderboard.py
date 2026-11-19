@@ -2,51 +2,40 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Event, EventParticipant, RouteSheet, Score, Station
+from app.core.auth import get_current_user
+from app.core.permissions import require_system_admin
+from app.db.models import (
+    Event,
+    EventParticipant,
+    RouteSheet,
+    Score,
+    Station,
+    User,
+)
 from app.db.session import get_db
 
 
 router = APIRouter(tags=["Leaderboard"])
 
 
-@router.get("/public/events", summary="Список мероприятий для публичного рейтинга")
-def list_public_events(session: Session = Depends(get_db)):
-    events = list(
-        session.scalars(select(Event).order_by(Event.event_date.desc(), Event.name))
-    )
-    if not events:
-        return []
-
-    route_sheets = session.execute(
-        select(RouteSheet.event_id, RouteSheet.id, RouteSheet.name)
-        .where(RouteSheet.event_id.in_([event.id for event in events]))
-        .order_by(RouteSheet.name, RouteSheet.id)
-    )
-    sheets_by_event: dict[int, list[dict[str, int | str]]] = {
-        event.id: [] for event in events
-    }
-    for event_id, route_sheet_id, name in route_sheets:
-        sheets_by_event[event_id].append({"id": route_sheet_id, "name": name})
-
-    return [
-        {
-            "id": event.id,
-            "name": event.name,
-            "event_date": event.event_date,
-            "route_sheets": sheets_by_event[event.id],
-        }
-        for event in events
-    ]
-
-
 @router.get(
-    "/public/events/{event_id}/leaderboard",
-    summary="Публичный рейтинг мероприятия",
+    "/events/{event_id}/leaderboard",
+    summary="Рейтинг мероприятия для системного администратора",
 )
-def read_public_leaderboard(
+def read_event_leaderboard(
     event_id: int,
     route_sheet_id: int | None = None,
+    user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
+):
+    require_system_admin(user)
+    return build_event_leaderboard(event_id, route_sheet_id, session)
+
+
+def build_event_leaderboard(
+    event_id: int,
+    route_sheet_id: int | None,
+    session: Session,
 ):
     event = session.get(Event, event_id)
     if event is None:
@@ -62,7 +51,7 @@ def read_public_leaderboard(
     stations = list(
         session.scalars(
             select(Station)
-            .where(Station.event_id == event_id)
+            .where(Station.event_id == event_id, Station.rating_mode == "main")
             .order_by(Station.id)
         )
     )
@@ -72,7 +61,12 @@ def read_public_leaderboard(
             func.sum(Score.points).label("total_points"),
             func.count(Score.id).label("stations_completed"),
         )
+        .join(Station, Station.id == Score.station_id)
         .where(Score.is_annulled.is_(False))
+        .where(
+            Station.event_id == event_id,
+            Station.rating_mode == "main",
+        )
         .group_by(Score.event_participant_id)
         .subquery()
     )
@@ -115,7 +109,11 @@ def read_public_leaderboard(
             Score.points,
         )
         .join(Station, Station.id == Score.station_id)
-        .where(Station.event_id == event_id, Score.is_annulled.is_(False))
+        .where(
+            Station.event_id == event_id,
+            Station.rating_mode == "main",
+            Score.is_annulled.is_(False),
+        )
     )
     points_by_participant = {
         (participant_id, station_id): points
@@ -164,4 +162,92 @@ def read_public_leaderboard(
             for station in stations
         ],
         "participants": participants,
+    }
+
+
+@router.get(
+    "/events/{event_id}/stations/{station_id}/leaderboard",
+    summary="Отдельный рейтинг площадки",
+)
+def read_station_leaderboard(
+    event_id: int,
+    station_id: int,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db),
+):
+    require_system_admin(user)
+    event = session.get(Event, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    station = session.scalar(
+        select(Station).where(
+            Station.id == station_id,
+            Station.event_id == event_id,
+        )
+    )
+    if station is None:
+        raise HTTPException(status_code=404, detail="Station not found")
+    if station.rating_mode != "separate":
+        raise HTTPException(
+            status_code=409,
+            detail="Station does not have a separate rating",
+        )
+
+    scores = (
+        select(
+            Score.event_participant_id.label("participant_id"),
+            Score.points.label("points"),
+        )
+        .where(
+            Score.station_id == station_id,
+            Score.is_annulled.is_(False),
+        )
+        .subquery()
+    )
+    ranked = (
+        select(
+            EventParticipant.id.label("participant_id"),
+            func.rank()
+            .over(order_by=func.coalesce(scores.c.points, 0).desc())
+            .label("place"),
+        )
+        .outerjoin(scores, scores.c.participant_id == EventParticipant.id)
+        .where(EventParticipant.event_id == event_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(
+            EventParticipant.registration_number,
+            func.coalesce(scores.c.points, 0).label("points"),
+            scores.c.points.is_not(None).label("has_score"),
+            ranked.c.place,
+        )
+        .outerjoin(scores, scores.c.participant_id == EventParticipant.id)
+        .join(ranked, ranked.c.participant_id == EventParticipant.id)
+        .where(EventParticipant.event_id == event_id)
+        .order_by(
+            func.coalesce(scores.c.points, 0).desc(),
+            EventParticipant.registration_number,
+        )
+    )
+    return {
+        "event": {
+            "id": event.id,
+            "name": event.name,
+            "event_date": event.event_date,
+        },
+        "station": {
+            "id": station.id,
+            "name": station.name,
+            "score_max": station.score_max,
+        },
+        "participants": [
+            {
+                "registration_number": registration_number,
+                "place": place,
+                "points": points,
+                "has_score": has_score,
+            }
+            for registration_number, points, has_score, place in rows
+        ],
     }

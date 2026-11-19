@@ -1,4 +1,5 @@
 from functools import lru_cache
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 from pydantic import model_validator
@@ -18,6 +19,8 @@ class Settings(BaseSettings):
     csrf_cookie_name: str = "kerfuffle_csrf"
     session_idle_minutes: int = 30
     session_absolute_hours: int = 12
+    public_proxy_ip: str | None = None
+    private_proxy_ip: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_user: str | None = None
@@ -52,6 +55,17 @@ class Settings(BaseSettings):
             missing.append("APP_ALLOWED_ORIGINS must include APP_PUBLIC_URL origin")
         if any(urlsplit(origin).scheme.lower() != "https" for origin in allowed_origins):
             missing.append("APP_ALLOWED_ORIGINS must use HTTPS in production")
+        proxy_ips = (self.public_proxy_ip, self.private_proxy_ip)
+        if any(not proxy_ip for proxy_ip in proxy_ips):
+            missing.append("PUBLIC_PROXY_IP and PRIVATE_PROXY_IP must be configured")
+        else:
+            try:
+                parsed_proxy_ips = tuple(ip_address(proxy_ip) for proxy_ip in proxy_ips)
+            except ValueError:
+                missing.append("PUBLIC_PROXY_IP and PRIVATE_PROXY_IP must be valid IP addresses")
+            else:
+                if parsed_proxy_ips[0] == parsed_proxy_ips[1]:
+                    missing.append("PUBLIC_PROXY_IP and PRIVATE_PROXY_IP must be different")
         smtp_values = (
             self.smtp_host,
             self.smtp_user,

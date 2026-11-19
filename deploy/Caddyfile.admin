@@ -1,0 +1,30 @@
+https://{$ADMIN_DOMAIN}:8443 {
+	tls internal
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		-Server
+	}
+
+	@outside_admin_network {
+		not remote_ip {$ADMIN_ALLOWED_CIDRS}
+	}
+	respond @outside_admin_network "Forbidden" 403
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend-admin:80
+	}
+}

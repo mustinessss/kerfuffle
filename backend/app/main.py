@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.api.v1.access_codes import router as access_codes_router
 from app.api.v1.auth import router as auth_router
@@ -11,6 +12,12 @@ from app.api.v1.route_sheets import router as route_sheets_router
 from app.api.v1.scores import router as scores_router
 from app.api.v1.stations import router as stations_router
 from app.core.config import get_settings
+from app.core.network_access import (
+    effective_client_ip,
+    is_public_api_request,
+    request_peer_ip,
+    resolve_network_zone,
+)
 
 settings = get_settings()
 
@@ -36,7 +43,36 @@ app.include_router(leaderboard_router, prefix=settings.api_v1_prefix)
 
 
 @app.middleware("http")
-async def disable_api_response_caching(request, call_next):
+async def protect_network_zone_and_disable_api_caching(
+    request: Request,
+    call_next,
+):
+    if settings.environment.lower() == "production":
+        peer_ip = request_peer_ip(request)
+        health_check = (
+            request.method == "GET"
+            and request.url.path == f"{settings.api_v1_prefix}/health"
+            and peer_ip in {"127.0.0.1", "::1"}
+        )
+        zone = resolve_network_zone(request, settings)
+        if not health_check and zone is None:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Request is not allowed from this network zone."},
+            )
+        if zone == "public" and not is_public_api_request(
+            request.method,
+            request.url.path,
+            settings.api_v1_prefix,
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "This endpoint is available only in the private network."},
+            )
+        request.state.client_ip = effective_client_ip(request, settings)
+    else:
+        request.state.client_ip = request.client.host if request.client else "unknown"
+
     response = await call_next(request)
     if request.url.path.startswith(settings.api_v1_prefix):
         response.headers["Cache-Control"] = "no-store"

@@ -4,6 +4,7 @@ import {
   createAccessCode,
   createRouteSheet,
   createEvent,
+  createStation,
   getCurrentAccount,
   getAccessCodes,
   getEvents,
@@ -14,6 +15,7 @@ import {
   registerParticipant,
   registerParticipantWithAccessCode,
   updateEvent,
+  updateStation,
   verifyAccessCode,
 } from "./api";
 import { useAuth } from "./authContext";
@@ -30,6 +32,7 @@ vi.mock("./api", async (importOriginal) => {
     createEvent: vi.fn(),
     createAccessCode: vi.fn(),
     createRouteSheet: vi.fn(),
+    createStation: vi.fn(),
     getCurrentAccount: vi.fn(),
     getAccessCodes: vi.fn(),
     getEvents: vi.fn(),
@@ -40,6 +43,7 @@ vi.mock("./api", async (importOriginal) => {
     registerParticipant: vi.fn(),
     registerParticipantWithAccessCode: vi.fn(),
     updateEvent: vi.fn(),
+    updateStation: vi.fn(),
     verifyAccessCode: vi.fn(),
   };
 });
@@ -64,11 +68,13 @@ const station = {
   score_min: 0,
   score_max: 10,
   score_step: 2,
+  rating_mode: "main" as const,
 };
 
 const mockCreateEvent = vi.mocked(createEvent);
 const mockCreateAccessCode = vi.mocked(createAccessCode);
 const mockCreateRouteSheet = vi.mocked(createRouteSheet);
+const mockCreateStation = vi.mocked(createStation);
 const mockGetCurrentAccount = vi.mocked(getCurrentAccount);
 const mockGetAccessCodes = vi.mocked(getAccessCodes);
 const mockGetEvents = vi.mocked(getEvents);
@@ -80,6 +86,7 @@ const mockRegisterParticipant = vi.mocked(registerParticipant);
 const mockRegisterParticipantWithAccessCode = vi.mocked(registerParticipantWithAccessCode);
 const mockVerifyAccessCode = vi.mocked(verifyAccessCode);
 const mockUpdateEvent = vi.mocked(updateEvent);
+const mockUpdateStation = vi.mocked(updateStation);
 const mockUseAuth = vi.mocked(useAuth);
 
 afterEach(cleanup);
@@ -102,6 +109,7 @@ beforeEach(() => {
   mockGetRouteSheets.mockResolvedValue([]);
   mockGetStations.mockResolvedValue([]);
   mockCreateEvent.mockResolvedValue(event);
+  mockCreateStation.mockResolvedValue(station);
   mockCreateAccessCode.mockResolvedValue({
     id: 51,
     event_id: event.id,
@@ -131,6 +139,7 @@ beforeEach(() => {
     station: null,
   });
   mockUpdateEvent.mockResolvedValue(event);
+  mockUpdateStation.mockResolvedValue(station);
   mockRegisterParticipant.mockResolvedValue({
     id: 41,
     event_id: event.id,
@@ -205,6 +214,63 @@ describe("WorkspacePage", () => {
       });
     });
     expect(await screen.findByText("Мероприятие обновлено.")).toBeTruthy();
+  });
+
+  it("creates a station with a separate rating mode", async () => {
+    mockGetEvents.mockResolvedValue([event]);
+    mockGetStations.mockResolvedValue([station]);
+    render(<WorkspacePage />);
+
+    fireEvent.change(await screen.findByLabelText("Режим рейтинга"), {
+      target: { value: "separate" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Название", { selector: 'input[name="stationName"]' }),
+      { target: { value: "Bonus" } },
+    );
+    fireEvent.change(screen.getByLabelText("Максимум"), {
+      target: { value: "12" },
+    });
+    fireEvent.change(screen.getByLabelText("Шаг"), {
+      target: { value: "2" },
+    });
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Добавить площадку" }).closest("form")!,
+    );
+
+    await waitFor(() => {
+      expect(mockCreateStation).toHaveBeenCalledWith(event.id, "", {
+        name: "Bonus",
+        score_min: 0,
+        score_max: 12,
+        score_step: 2,
+        rating_mode: "separate",
+      });
+    });
+  });
+
+  it("allows a system administrator to change a station rating mode", async () => {
+    mockGetEvents.mockResolvedValue([event]);
+    mockGetStations.mockResolvedValue([station]);
+    render(<WorkspacePage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Настроить" }));
+    fireEvent.change(screen.getAllByLabelText("Режим рейтинга")[0], {
+      target: { value: "separate" },
+    });
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Сохранить" }).closest("form")!,
+    );
+
+    await waitFor(() => {
+      expect(mockUpdateStation).toHaveBeenCalledWith(station.id, "", {
+        name: station.name,
+        score_min: station.score_min,
+        score_max: station.score_max,
+        score_step: station.score_step,
+        rating_mode: "separate",
+      });
+    });
   });
 
   it("does not render event creation for an unauthenticated user", () => {

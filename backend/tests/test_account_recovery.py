@@ -169,6 +169,10 @@ def test_employee_account_routes_are_not_exposed_in_openapi():
         "/api/v1/stations/{station_id}/participants/lookup",
         "/api/v1/stations/{station_id}/scores",
         "/api/v1/me",
+        "/api/v1/public/events",
+        "/api/v1/public/events/{event_id}/leaderboard",
     }
 
     assert removed_paths.isdisjoint(paths)
+    assert "/api/v1/events/{event_id}/leaderboard" in paths
+    assert "/api/v1/events/{event_id}/stations/{station_id}/leaderboard" in paths

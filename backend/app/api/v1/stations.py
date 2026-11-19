@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
@@ -18,6 +20,7 @@ class StationCreate(BaseModel):
     score_min: int = Field(ge=0)
     score_max: int = Field(ge=0)
     score_step: int = Field(gt=0)
+    rating_mode: Literal["main", "separate"] = "main"
 
     @field_validator("name")
     @classmethod
@@ -43,6 +46,7 @@ class StationUpdate(BaseModel):
     score_min: int | None = Field(default=None, ge=0)
     score_max: int | None = Field(default=None, ge=0)
     score_step: int | None = Field(default=None, gt=0)
+    rating_mode: Literal["main", "separate"] | None = None
 
     @field_validator("name")
     @classmethod
@@ -71,6 +75,7 @@ def station_response(station: Station) -> dict[str, int | str]:
         "score_min": station.score_min,
         "score_max": station.score_max,
         "score_step": station.score_step,
+        "rating_mode": station.rating_mode,
     }
 
 

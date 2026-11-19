@@ -1,11 +1,22 @@
 name: kerfuffle-production
 
 networks:
-  kerfuffle:
+  public-ingress:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.28.0.0/24
+        - subnet: 172.29.0.0/24
+  private-ingress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  data:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
 
 services:
   db:
@@ -38,8 +49,8 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      kerfuffle:
-        ipv4_address: 172.28.0.10
+      data:
+        ipv4_address: 172.31.0.20
     restart: unless-stopped
     logging:
       driver: json-file
@@ -58,20 +69,21 @@ services:
       ACCESS_CODE_HASH_SECRET: ${ACCESS_CODE_HASH_SECRET:?Set ACCESS_CODE_HASH_SECRET in deploy/.env.production}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:?Set APP_PUBLIC_URL in deploy/.env.production}
       APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:?Set APP_ALLOWED_ORIGINS in deploy/.env.production}
+      PUBLIC_PROXY_IP: ${PUBLIC_PROXY_IP:?Set PUBLIC_PROXY_IP in deploy/.env.production}
+      PRIVATE_PROXY_IP: ${PRIVATE_PROXY_IP:?Set PRIVATE_PROXY_IP in deploy/.env.production}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
-      MANUAL_AUTH_LINKS_ENABLED: ${MANUAL_AUTH_LINKS_ENABLED:-false}
     volumes:
       - ./postgres-tls/ca.crt:/opt/kerfuffle/tls/ca.crt:ro
     depends_on:
       db:
         condition: service_healthy
     networks:
-      - kerfuffle
+      - data
     restart: "no"
 
   backend:
@@ -83,13 +95,14 @@ services:
       ACCESS_CODE_HASH_SECRET: ${ACCESS_CODE_HASH_SECRET:?Set ACCESS_CODE_HASH_SECRET in deploy/.env.production}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:?Set APP_PUBLIC_URL in deploy/.env.production}
       APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:?Set APP_ALLOWED_ORIGINS in deploy/.env.production}
+      PUBLIC_PROXY_IP: ${PUBLIC_PROXY_IP:?Set PUBLIC_PROXY_IP in deploy/.env.production}
+      PRIVATE_PROXY_IP: ${PRIVATE_PROXY_IP:?Set PRIVATE_PROXY_IP in deploy/.env.production}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
-      MANUAL_AUTH_LINKS_ENABLED: ${MANUAL_AUTH_LINKS_ENABLED:-false}
       SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
       SESSION_ABSOLUTE_HOURS: ${SESSION_ABSOLUTE_HOURS:-12}
     volumes:
@@ -100,7 +113,12 @@ services:
       migrate:
         condition: service_completed_successfully
     networks:
-      - kerfuffle
+      data:
+        ipv4_address: 172.31.0.10
+      public-ingress:
+        ipv4_address: 172.29.0.10
+      private-ingress:
+        ipv4_address: 172.30.0.10
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).read()"]
       interval: 10s
@@ -114,14 +132,34 @@ services:
         max-size: "10m"
         max-file: "5"
 
-  frontend:
-    image: ghcr.io/mustinessss/kerfuffle-frontend:${KERFUFFLE_IMAGE_TAG:-latest}
+  frontend-public:
+    image: ghcr.io/mustinessss/kerfuffle-frontend-public:${KERFUFFLE_IMAGE_TAG:-latest}
     pull_policy: always
     depends_on:
       backend:
         condition: service_healthy
     networks:
-      - kerfuffle
+      - public-ingress
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  frontend-admin:
+    image: ghcr.io/mustinessss/kerfuffle-frontend-admin:${KERFUFFLE_IMAGE_TAG:-latest}
+    pull_policy: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - private-ingress
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
       interval: 10s
@@ -147,11 +185,37 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      frontend:
+      frontend-public:
         condition: service_healthy
     networks:
-      kerfuffle:
-        ipv4_address: 172.28.0.2
+      public-ingress:
+        ipv4_address: 172.29.0.2
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  admin-caddy:
+    image: caddy:2-alpine
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?Set ADMIN_DOMAIN in deploy/.env.production}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:?Set ADMIN_ALLOWED_CIDRS in deploy/.env.production}
+    ports:
+      - "${ADMIN_BIND_IP:-127.0.0.1}:8443:8443"
+    volumes:
+      - ./Caddyfile.admin:/etc/caddy/Caddyfile:ro
+      - admin-caddy-data:/data
+      - admin-caddy-config:/config
+    depends_on:
+      frontend-admin:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      private-ingress:
+        ipv4_address: 172.30.0.2
     restart: unless-stopped
     logging:
       driver: json-file
@@ -163,3 +227,5 @@ volumes:
   postgres-data:
   caddy-data:
   caddy-config:
+  admin-caddy-data:
+  admin-caddy-config:

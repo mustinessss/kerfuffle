@@ -49,6 +49,12 @@ function messageFor(error: unknown): string {
     : "Не удалось связаться с сервером. Проверьте подключение и повторите попытку.";
 }
 
+function stationRatingDescription(ratingMode: StationSummary["rating_mode"]): string {
+  return ratingMode === "separate"
+    ? "Баллы учитываются только в отдельном рейтинге этой площадки."
+    : "Баллы учитываются в общем рейтинге мероприятия и рейтинге маршрутного листа.";
+}
+
 function AuthGate() {
   const { login, user, error: authError } = useAuth();
   const [saving, setSaving] = useState(false);
@@ -677,6 +683,9 @@ function StationEditor({
   const [savedMin, setSavedMin] = useState(String(station.score_min));
   const [savedMax, setSavedMax] = useState(String(station.score_max));
   const [savedStep, setSavedStep] = useState(String(station.score_step));
+  const [savedRatingMode, setSavedRatingMode] = useState<StationSummary["rating_mode"]>(
+    station.rating_mode,
+  );
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -688,6 +697,7 @@ function StationEditor({
         score_min: Number(savedMin),
         score_max: Number(savedMax),
         score_step: Number(savedStep),
+        rating_mode: savedRatingMode,
       });
       setEditing(false);
       onUpdated();
@@ -706,6 +716,18 @@ function StationEditor({
           <label>Минимум<input type="number" min="0" required value={savedMin} onChange={(event) => setSavedMin(event.target.value)} /></label>
           <label>Максимум<input type="number" min="0" required value={savedMax} onChange={(event) => setSavedMax(event.target.value)} /></label>
           <label>Шаг<input type="number" min="1" required value={savedStep} onChange={(event) => setSavedStep(event.target.value)} /></label>
+          <label>Режим рейтинга
+            <select
+              value={savedRatingMode}
+              onChange={(event) => setSavedRatingMode(
+                event.target.value === "separate" ? "separate" : "main",
+              )}
+            >
+              <option value="main">Основной рейтинг</option>
+              <option value="separate">Отдельный рейтинг площадки</option>
+            </select>
+          </label>
+          <p className="form-hint">{stationRatingDescription(savedRatingMode)}</p>
           <div className="form-actions"><button className="primary-button" disabled={saving}>{saving ? "Сохраняем…" : "Сохранить"}</button><button type="button" className="quiet-button" onClick={() => setEditing(false)}>Отмена</button></div>
         </form>
       ) : (
@@ -713,6 +735,8 @@ function StationEditor({
           <div className="station-admin-info">
             <strong>{station.name}</strong>
             <span>{station.score_min}–{station.score_max} баллов · шаг {station.score_step}</span>
+            <small>{station.rating_mode === "separate" ? "Отдельный рейтинг" : "Основной рейтинг"}</small>
+            <small>{stationRatingDescription(station.rating_mode)}</small>
           </div>
           {editable && <button className="quiet-button" onClick={() => setEditing(true)}>Настроить</button>}
         </>
@@ -745,6 +769,7 @@ function CreateStationForm({
         score_min: Number(form.get("scoreMin")),
         score_max: Number(form.get("scoreMax")),
         score_step: Number(form.get("scoreStep")),
+        rating_mode: form.get("ratingMode") === "separate" ? "separate" : "main",
       });
       formElement.reset();
       onCreated();
@@ -761,6 +786,15 @@ function CreateStationForm({
       <label>Минимум<input name="scoreMin" type="number" min="0" defaultValue="0" required /></label>
       <label>Максимум<input name="scoreMax" type="number" min="0" defaultValue="10" required /></label>
       <label>Шаг<input name="scoreStep" type="number" min="1" defaultValue="1" required /></label>
+      <label>Режим рейтинга
+        <select name="ratingMode" defaultValue="main">
+          <option value="main">Основной рейтинг</option>
+          <option value="separate">Отдельный рейтинг площадки</option>
+        </select>
+      </label>
+      <p className="form-hint">{stationRatingDescription(
+        "main",
+      )} Для отдельного рейтинга баллы не влияют на общий рейтинг мероприятия и маршрутного листа.</p>
       <button className="primary-button" disabled={saving}>{saving ? "Создаём…" : "Добавить площадку"}</button>
     </form>
   );
@@ -1142,7 +1176,7 @@ export function RegistrationPage() {
   );
 }
 
-function RegistrarCodeRegistrationPage() {
+export function RegistrarCodeRegistrationPage() {
   const [code, setCode] = useState("");
   const [access, setAccess] = useState<VerifiedAccess | null>(null);
   const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);

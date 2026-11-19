@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
 import {
   ApiError,
-  getPublicEvents,
-  getPublicLeaderboard,
+  getEventLeaderboard,
+  getEvents,
+  getRouteSheets,
+  getStationLeaderboard,
+  getStations,
   type LeaderboardResponse,
-  type PublicEventSummary,
+  type EventSummary,
+  type RouteSheetSummary,
+  type StationLeaderboardResponse,
+  type StationSummary,
 } from "./api";
 import { useAuth } from "./authContext";
 import { RegistrationPage, ScoringPage, WorkspacePage } from "./WorkspacePages";
@@ -69,11 +75,11 @@ function App() {
               <span className="action-copy"><strong>Ввод баллов</strong><small>Рабочее место сотрудника площадки</small></span>
               <span className="action-arrow" aria-hidden="true">↗</span>
             </a>
-            <div className="action-card action-board">
+            <a className="action-card action-board" href="/leaderboard">
               <span className="action-number">03</span>
-              <span className="action-copy"><strong>Таблица участников</strong><small>Посмотрите текущий рейтинг события</small></span>
-              <HomeLeaderboardPicker />
-            </div>
+              <span className="action-copy"><strong>Рейтинги</strong><small>Общий, по маршрутным листам и площадкам</small></span>
+              <span className="action-arrow" aria-hidden="true">↗</span>
+            </a>
           </section>
 
           <p className="home-note">Системный администратор? <a href="/workspace">Рабочее пространство</a></p>
@@ -97,69 +103,48 @@ function App() {
   );
 }
 
-function HomeLeaderboardPicker() {
-  const [events, setEvents] = useState<PublicEventSummary[]>([]);
-  const [eventId, setEventId] = useState("");
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const controller = new AbortController();
-    getPublicEvents(controller.signal)
-      .then((result) => {
-        setEvents(result);
-        setEventId(result[0] ? String(result[0].id) : "");
-      })
-      .catch((requestError: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(requestError instanceof ApiError
-            ? requestError.message
-            : "Не удалось загрузить список мероприятий.");
-        }
-      });
-    return () => controller.abort();
-  }, []);
-
-  return (
-    <form className="event-form" onSubmit={(event) => {
-      event.preventDefault();
-      if (eventId) window.location.href = `/leaderboard?eventId=${encodeURIComponent(eventId)}`;
-    }}>
-      <label className="visually-hidden" htmlFor="home-event">Мероприятие</label>
-      <select id="home-event" value={eventId} onChange={(event) => setEventId(event.target.value)} required>
-        <option value="" disabled>Выберите мероприятие</option>
-        {events.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-      </select>
-      <button type="submit" disabled={!eventId}>Открыть ↗</button>
-      {error && <span className="form-error" role="alert">{error}</span>}
-    </form>
-  );
-}
-
 function LeaderboardPage() {
-  const [data, setData] = useState<LeaderboardResponse | null>(null);
-  const [events, setEvents] = useState<PublicEventSummary[]>([]);
+  const { user, loading: authLoading } = useAuth();
+  const [data, setData] = useState<LeaderboardResponse | StationLeaderboardResponse | null>(null);
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
+  const [stations, setStations] = useState<StationSummary[]>([]);
   const [selectedEventId, setSelectedEventId] = useState(eventIdFromUrl());
-  const [selectedMode, setSelectedMode] = useState(
-    new URLSearchParams(window.location.search).get("routeSheetId") ?? "",
-  );
+  const [selectedMode, setSelectedMode] = useState(modeFromUrl());
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadedQuery, setLoadedQuery] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
-  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
+  const [detailsSettledEventId, setDetailsSettledEventId] = useState<number | null>(null);
+  const [loadedEventId, setLoadedEventId] = useState<number | null>(null);
   const currentEvent = events.find((item) => String(item.id) === selectedEventId) ?? null;
-  const selectedRouteSheetId = selectedMode ? Number(selectedMode) : undefined;
-  const queryKey = `${selectedEventId}:${selectedMode || "all"}`;
-  const validSelection = currentEvent !== null && (
-    selectedRouteSheetId === undefined
-    || currentEvent.route_sheets.some((sheet) => sheet.id === selectedRouteSheetId)
+  const eventsLoading = authLoading || (user?.is_system_admin === true && !eventsLoaded);
+  const detailsLoading = Boolean(
+    currentEvent && detailsSettledEventId !== currentEvent.id,
   );
+  const modeParts = selectedMode.split(":");
+  const selectedRouteSheetId = modeParts[0] === "route" ? Number(modeParts[1]) : undefined;
+  const selectedStationId = modeParts[0] === "station" ? Number(modeParts[1]) : undefined;
+  const queryKey = `${selectedEventId}:${selectedMode || "all"}`;
+  const validSelection = currentEvent !== null
+    && loadedEventId === currentEvent.id
+    && (selectedRouteSheetId === undefined
+      || routeSheets.some((sheet) => sheet.id === selectedRouteSheetId))
+    && (selectedStationId === undefined
+      || stations.some((station) => (
+        station.id === selectedStationId && station.rating_mode === "separate"
+      )));
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!user?.is_system_admin) {
+      return;
+    }
     const controller = new AbortController();
-    getPublicEvents(controller.signal)
+    getEvents("", controller.signal)
       .then((result) => {
         setEvents(result);
         const preferredEventId = eventIdFromUrl();
@@ -167,12 +152,6 @@ function LeaderboardPage() {
           ? preferredEventId
           : String(result[0]?.id ?? "");
         setSelectedEventId(activeEventId);
-        setSelectedMode((currentMode) => {
-          const event = result.find((item) => String(item.id) === activeEventId);
-          return event?.route_sheets.some((sheet) => String(sheet.id) === currentMode)
-            ? currentMode
-            : "";
-        });
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) {
@@ -182,10 +161,50 @@ function LeaderboardPage() {
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setEventsLoading(false);
+        if (!controller.signal.aborted) setEventsLoaded(true);
       });
     return () => controller.abort();
-  }, []);
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (!user?.is_system_admin || !currentEvent) return;
+    const controller = new AbortController();
+    Promise.all([
+      getRouteSheets(currentEvent.id, "", controller.signal),
+      getStations(currentEvent.id, "", controller.signal),
+    ])
+      .then(([nextRouteSheets, nextStations]) => {
+        setRouteSheets(nextRouteSheets);
+        setStations(nextStations);
+        setLoadedEventId(currentEvent.id);
+        setSelectedMode((currentMode) => {
+          const [kind, id] = currentMode.split(":");
+          const selectedId = Number(id);
+          if (kind === "route" && nextRouteSheets.some((sheet) => sheet.id === selectedId)) {
+            return currentMode;
+          }
+          if (kind === "station" && nextStations.some((station) => (
+            station.id === selectedId && station.rating_mode === "separate"
+          ))) {
+            return currentMode;
+          }
+          return "";
+        });
+      })
+      .catch((requestError: unknown) => {
+        if (!controller.signal.aborted) {
+          setRouteSheets([]);
+          setStations([]);
+          setError(requestError instanceof ApiError
+            ? requestError.message
+            : "Не удалось загрузить площадки и маршрутные листы.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailsSettledEventId(currentEvent.id);
+      });
+    return () => controller.abort();
+  }, [currentEvent, user]);
 
   useEffect(() => {
     if (!validSelection) return;
@@ -200,11 +219,17 @@ function LeaderboardPage() {
       controller = new AbortController();
       if (initial) setLoading(true);
       try {
-        const result = await getPublicLeaderboard(
-          Number(selectedEventId),
-          selectedRouteSheetId,
-          controller.signal,
-        );
+        const result = selectedStationId === undefined
+          ? await getEventLeaderboard(
+            Number(selectedEventId),
+            selectedRouteSheetId,
+            controller.signal,
+          )
+          : await getStationLeaderboard(
+            Number(selectedEventId),
+            selectedStationId,
+            controller.signal,
+          );
         if (!active) return;
         hasSuccessfulResponse = true;
         setData(result);
@@ -233,27 +258,46 @@ function LeaderboardPage() {
       controller?.abort();
       window.clearInterval(intervalId);
     };
-  }, [queryKey, refreshKey, selectedEventId, selectedRouteSheetId, validSelection]);
+  }, [queryKey, refreshKey, selectedEventId, selectedRouteSheetId, selectedStationId, validSelection]);
 
   const visibleData = validSelection && loadedQuery === queryKey ? data : null;
   const normalizedQuery = query.trim().toLowerCase();
-  const participants = !visibleData || !normalizedQuery
-    ? visibleData?.participants ?? []
-    : visibleData.participants.filter((participant) =>
-      participant.registration_number.toLowerCase().includes(normalizedQuery),
-    );
+  const matchesParticipant = (registrationNumber: string) => (
+    !normalizedQuery || registrationNumber.toLowerCase().includes(normalizedQuery)
+  );
+  const filteredParticipantCount = visibleData?.participants.filter(
+    (participant) => matchesParticipant(participant.registration_number),
+  ).length ?? 0;
 
   function updateUrl(eventId: string, mode: string) {
     const params = new URLSearchParams(window.location.search);
     params.set("eventId", eventId);
-    if (mode) params.set("routeSheetId", mode);
-    else params.delete("routeSheetId");
+    params.delete("routeSheetId");
+    params.delete("stationId");
+    if (mode.startsWith("route:")) params.set("routeSheetId", mode.slice("route:".length));
+    if (mode.startsWith("station:")) params.set("stationId", mode.slice("station:".length));
     window.history.replaceState(null, "", `/leaderboard?${params.toString()}`);
   }
 
+  if (authLoading) {
+    return <main className="board-page"><div className="state-box" role="status">Проверяем сессию…</div></main>;
+  }
+  if (!user?.is_system_admin) {
+    return (
+      <main className="board-page">
+        <h1>Рейтинги закрыты.</h1>
+        <p>Войдите в локальной административной зоне для просмотра результатов.</p>
+        <a className="primary-button" href="/login">Войти</a>
+      </main>
+    );
+  }
+
+  const isStationLeaderboard = (
+    value: LeaderboardResponse | StationLeaderboardResponse,
+  ): value is StationLeaderboardResponse => "station" in value;
   return (
     <main className="board-page">
-      <div className="page-kicker"><span className="eyebrow">ОТКРЫТЫЕ РЕЗУЛЬТАТЫ</span><span className="live-indicator"><i /> АВТООБНОВЛЕНИЕ</span></div>
+      <div className="page-kicker"><span className="eyebrow">АДМИНИСТРАТИВНАЯ ЗОНА</span><span className="live-indicator"><i /> АВТООБНОВЛЕНИЕ</span></div>
       <div className="board-heading">
         <div>
           <h1>Рейтинг<span className="accent-dot">.</span></h1>
@@ -264,11 +308,12 @@ function LeaderboardPage() {
           <select
             id="board-event"
             value={selectedEventId}
-            disabled={eventsLoading || events.length === 0}
+            disabled={eventsLoading || detailsLoading || events.length === 0}
             onChange={(event) => {
               const nextId = event.target.value;
               setSelectedEventId(nextId);
               setSelectedMode("");
+              setLoadedEventId(null);
               setError("");
               updateUrl(nextId, "");
             }}
@@ -279,7 +324,7 @@ function LeaderboardPage() {
           <select
             id="board-mode"
             value={selectedMode}
-            disabled={!currentEvent}
+            disabled={!currentEvent || detailsLoading}
             onChange={(event) => {
               setSelectedMode(event.target.value);
               setError("");
@@ -287,15 +332,27 @@ function LeaderboardPage() {
             }}
           >
             <option value="">Общий рейтинг</option>
-            {currentEvent?.route_sheets.map((sheet) => (
-              <option key={sheet.id} value={sheet.id}>{sheet.name}</option>
-            ))}
+            {routeSheets.length > 0 && (
+              <optgroup label="Маршрутные листы">
+                {routeSheets.map((sheet) => (
+                  <option key={sheet.id} value={`route:${sheet.id}`}>{sheet.name}</option>
+                ))}
+              </optgroup>
+            )}
+            {stations.some((station) => station.rating_mode === "separate") && (
+              <optgroup label="Отдельные рейтинги площадок">
+                {stations.filter((station) => station.rating_mode === "separate").map((station) => (
+                  <option key={station.id} value={`station:${station.id}`}>{station.name}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
       </div>
 
       {!eventsLoading && events.length === 0 && !error && <div className="notice-box">Мероприятий пока нет.</div>}
       {eventsLoading && <div className="state-box" role="status"><span className="spinner" />Загружаем мероприятия…</div>}
+      {detailsLoading && <div className="state-box" role="status"><span className="spinner" />Загружаем настройки мероприятия…</div>}
       {validSelection && loading && !visibleData && <div className="state-box" role="status"><span className="spinner" />Загружаем результаты…</div>}
       {error && <div className={visibleData ? "inline-error" : "state-box error-box"} role="alert">
         <span>{error}</span>
@@ -306,41 +363,64 @@ function LeaderboardPage() {
         <>
           <section className="board-summary" aria-label="Сводка рейтинга">
             <div><span>УЧАСТНИКОВ</span><strong>{visibleData.participants.length}</strong></div>
-            <div><span>ПЛОЩАДОК</span><strong>{visibleData.stations_total}</strong></div>
+            <div><span>{isStationLeaderboard(visibleData) ? "ПЛОЩАДКА" : "ПЛОЩАДОК"}</span><strong>{isStationLeaderboard(visibleData) ? visibleData.station.name : visibleData.stations_total}</strong></div>
             <div><span>ОБНОВЛЕНО</span><strong className="updated-time">{lastUpdated?.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "—"}</strong></div>
           </section>
           <div className="table-heading">
-            <div><span className="eyebrow">ТЕКУЩИЕ РЕЗУЛЬТАТЫ</span><h2>Участники</h2></div>
+            <div><span className="eyebrow">ТЕКУЩИЕ РЕЗУЛЬТАТЫ</span><h2>{isStationLeaderboard(visibleData) ? `Рейтинг площадки · максимум ${visibleData.station.score_max}` : "Участники"}</h2></div>
             <label className="search-control"><span aria-hidden="true">⌕</span><input aria-label="Поиск по номеру участника" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Номер участника" /></label>
           </div>
           <div className="leaderboard-table" role="table" aria-label="Рейтинг участников">
             <div className="table-row table-header" role="row">
-              <span role="columnheader">МЕСТО</span><span role="columnheader">НОМЕР УЧАСТНИКА</span><span role="columnheader">ПЛОЩАДКИ</span><span role="columnheader">БАЛЛЫ</span>
+              <span role="columnheader">МЕСТО</span><span role="columnheader">НОМЕР УЧАСТНИКА</span>
+              {!isStationLeaderboard(visibleData) && <span role="columnheader">ПЛОЩАДКИ</span>}
+              <span role="columnheader">БАЛЛЫ</span>
             </div>
-            {participants.map((participant) => (
+            {visibleData && isStationLeaderboard(visibleData) && visibleData.participants
+              .filter((participant) => matchesParticipant(participant.registration_number))
+              .map((participant) => (
               <div className="table-row" role="row" key={participant.registration_number}>
                 <strong className="rank-cell" role="cell">{String(participant.place).padStart(2, "0")}</strong>
                 <span className="participant-cell" role="cell">
                   <strong>№ {participant.registration_number}</strong>
                 </span>
-                <span className="progress-cell" role="cell" aria-label="Баллы по площадкам">
-                  {participant.stations.map((station) => (
-                    <span className={`station-progress ${station.points === null ? "not-visited" : ""}`} key={station.station_id} title={`${station.name}: ${station.points === null ? "не пройдена" : `${station.points} из ${station.score_max}`}`}>
-                      <span>{station.name}</span>
-                      <strong>{station.points === null ? "—" : station.points}</strong>
-                    </span>
-                  ))}
-                </span>
-                <strong className="points-cell" role="cell">{participant.total_points}<small> БАЛЛОВ</small></strong>
+                <strong className="points-cell" role="cell">{participant.points}<small> БАЛЛОВ</small></strong>
               </div>
             ))}
-            {participants.length === 0 && <div className="empty-state">{visibleData.participants.length ? "Участник с таким номером не найден." : "В этом мероприятии пока нет участников."}</div>}
+            {visibleData && !isStationLeaderboard(visibleData) && visibleData.participants
+              .filter((participant) => matchesParticipant(participant.registration_number))
+              .map((participant) => (
+                <div className="table-row" role="row" key={participant.registration_number}>
+                  <strong className="rank-cell" role="cell">{String(participant.place).padStart(2, "0")}</strong>
+                  <span className="participant-cell" role="cell">
+                    <strong>№ {participant.registration_number}</strong>
+                  </span>
+                  <span className="progress-cell" role="cell" aria-label="Баллы по основным площадкам">
+                    {participant.stations.map((station) => (
+                      <span className={`station-progress ${station.points === null ? "not-visited" : ""}`} key={station.station_id} title={`${station.name}: ${station.points === null ? "не пройдена" : `${station.points} из ${station.score_max}`}`}>
+                        <span>{station.name}</span>
+                        <strong>{station.points === null ? "—" : station.points}</strong>
+                      </span>
+                    ))}
+                  </span>
+                  <strong className="points-cell" role="cell">{participant.total_points}<small> БАЛЛОВ</small></strong>
+                </div>
+              ))}
+            {filteredParticipantCount === 0 && <div className="empty-state">{visibleData.participants.length ? "Участник с таким номером не найден." : "В этом мероприятии пока нет участников."}</div>}
           </div>
-          <p className="privacy-note">Публично отображаются только номера участников и результаты. Равные результаты занимают одно место.</p>
+          <p className="privacy-note">Отображаются только номера участников и результаты. Равные результаты занимают одно место.</p>
         </>
       )}
     </main>
   );
+}
+
+function modeFromUrl(): string {
+  const parameters = new URLSearchParams(window.location.search);
+  const stationId = parameters.get("stationId");
+  if (stationId) return `station:${stationId}`;
+  const routeSheetId = parameters.get("routeSheetId");
+  return routeSheetId ? `route:${routeSheetId}` : "";
 }
 
 export default App;

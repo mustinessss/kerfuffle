@@ -13,6 +13,7 @@ from app.core.auth import (
     verify_login,
 )
 from app.core.config import Settings, get_settings
+from app.core.network_access import effective_client_ip
 from app.core.passwords import is_valid_email, normalize_email
 from app.db.models import User
 from app.db.session import get_db
@@ -65,7 +66,7 @@ def login(
         session,
         payload.email,
         payload.password,
-        request.client.host if request.client else "unknown",
+        effective_client_ip(request, settings),
         settings,
     )
     if user is None:

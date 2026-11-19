@@ -1,23 +1,46 @@
 {$APP_DOMAIN} {
-    encode zstd gzip
+	encode zstd gzip
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "camera=(), geolocation=(), microphone=()"
-        -Server
-    }
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		-Server
+	}
 
-    @api path /api/*
-    handle @api {
-        reverse_proxy backend:8000
-        header Cache-Control "no-store"
-        header Pragma "no-cache"
-    }
+	@root path /
+	redir @root /register 302
 
-    handle {
-        reverse_proxy frontend:80
-    }
+	@public_post {
+		method POST
+		path /api/v1/public/access/verify /api/v1/public/access/participants /api/v1/public/access/participant-lookup /api/v1/public/access/scores
+	}
+	handle @public_post {
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	@public_route_sheets {
+		method GET
+		path /api/v1/public/access/route-sheets
+	}
+	handle @public_route_sheets {
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	@public_frontend {
+		path /register /register/ /score /score/ /assets/* /favicon.svg
+	}
+	handle @public_frontend {
+		reverse_proxy frontend-public:80
+	}
+
+	respond "Not found" 404
 }
