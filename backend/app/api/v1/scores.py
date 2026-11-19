@@ -124,17 +124,15 @@ def lookup_participant_record(
     if station is None:
         raise HTTPException(status_code=404, detail="Station not found")
 
-    row = session.execute(
-        select(EventParticipant, Person)
-        .join(Person, Person.id == EventParticipant.person_id)
+    registration = session.scalar(
+        select(EventParticipant)
         .where(
             EventParticipant.event_id == station.event_id,
             EventParticipant.registration_number == payload.registration_number,
         )
-    ).first()
-    if row is None:
+    )
+    if registration is None:
         raise HTTPException(status_code=404, detail="Participant not found")
-    registration, person = row
     score = session.scalar(
         select(Score).where(
             Score.event_participant_id == registration.id,
@@ -144,8 +142,6 @@ def lookup_participant_record(
     return {
         "event_participant_id": registration.id,
         "registration_number": registration.registration_number,
-        "first_name": person.first_name,
-        "last_name": person.last_name,
         "already_scored": score is not None,
         "score": _score_response(score) if score is not None else None,
     }

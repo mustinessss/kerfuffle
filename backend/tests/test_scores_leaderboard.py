@@ -145,9 +145,12 @@ def test_participant_lookup_uses_six_digit_number(
         db_session,
     )
 
-    assert number_result["first_name"] == "Ada"
-    assert number_result["already_scored"] is False
+    assert number_result["registration_number"] == "000001"
+    assert "first_name" not in number_result
+    assert "last_name" not in number_result
     assert "phone" not in number_result
+    assert "workplace_or_study" not in number_result
+    assert number_result["already_scored"] is False
 
 
 def test_score_record_can_be_created_once_and_lookup_shows_it(

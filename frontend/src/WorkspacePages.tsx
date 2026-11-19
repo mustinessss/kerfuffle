@@ -1392,8 +1392,7 @@ function CodeScoringPage() {
             {participant && (
               <div className="participant-confirmation">
                 <p className="eyebrow">УЧАСТНИК НАЙДЕН</p>
-                <h2>{participant.first_name} {participant.last_name}</h2>
-                <p>Номер {participant.registration_number}</p>
+                <h2>Номер участника {participant.registration_number}</h2>
                 {participant.already_scored ? (
                   <div className="already-scored-message" role="status">
                     {participant.score?.is_annulled

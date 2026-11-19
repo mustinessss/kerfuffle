@@ -59,7 +59,7 @@ services:
         max-file: "5"
 
   migrate:
-    image: ghcr.io/mustinessss/kerfuffle-backend:${KERFUFFLE_IMAGE_TAG:-latest}
+    image: ghcr.io/mustinessss/kerfuffle-backend:${KERFUFFLE_MIGRATION_IMAGE_TAG:-${KERFUFFLE_IMAGE_TAG:-latest}}
     pull_policy: always
     command: ["python", "-m", "alembic", "upgrade", "head"]
     environment:

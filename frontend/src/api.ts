@@ -122,11 +122,13 @@ export interface RegisteredParticipant {
   registered_at: string;
 }
 
+export interface PublicRegistrationReceipt {
+  registration_number: string;
+}
+
 export interface ParticipantLookup {
   event_participant_id: number;
   registration_number: string;
-  first_name: string;
-  last_name: string;
   already_scored: boolean;
   score: ScoreRecord | null;
 }
@@ -379,7 +381,7 @@ export function registerParticipantWithAccessCode(
   routeSheetId: number | null,
   registrationNumber: string,
 ) {
-  return requestJson<RegisteredParticipant>("/public/access/participants", {
+  return requestJson<PublicRegistrationReceipt>("/public/access/participants", {
     accessToken,
     method: "POST",
     body: {

@@ -12,6 +12,7 @@ import {
   getRouteSheetsWithAccessCode,
   getRouteSheets,
   getStations,
+  lookupWithAccessCode,
   registerParticipant,
   registerParticipantWithAccessCode,
   updateEvent,
@@ -40,6 +41,7 @@ vi.mock("./api", async (importOriginal) => {
     getRouteSheetsWithAccessCode: vi.fn(),
     getRouteSheets: vi.fn(),
     getStations: vi.fn(),
+    lookupWithAccessCode: vi.fn(),
     registerParticipant: vi.fn(),
     registerParticipantWithAccessCode: vi.fn(),
     updateEvent: vi.fn(),
@@ -82,6 +84,7 @@ const mockGetParticipants = vi.mocked(getParticipants);
 const mockGetRouteSheetsWithAccessCode = vi.mocked(getRouteSheetsWithAccessCode);
 const mockGetRouteSheets = vi.mocked(getRouteSheets);
 const mockGetStations = vi.mocked(getStations);
+const mockLookupWithAccessCode = vi.mocked(lookupWithAccessCode);
 const mockRegisterParticipant = vi.mocked(registerParticipant);
 const mockRegisterParticipantWithAccessCode = vi.mocked(registerParticipantWithAccessCode);
 const mockVerifyAccessCode = vi.mocked(verifyAccessCode);
@@ -152,15 +155,7 @@ beforeEach(() => {
     registered_at: "2026-11-18T12:00:00+00:00",
   });
   mockRegisterParticipantWithAccessCode.mockResolvedValue({
-    id: 41,
-    event_id: event.id,
-    person_id: 42,
-    first_name: "Alex",
-    last_name: "Example",
     registration_number: "000001",
-    route_sheet_id: 31,
-    route_sheet_name: "North route",
-    registered_at: "2026-11-18T12:00:00+00:00",
   });
 });
 
@@ -391,6 +386,38 @@ it("uses only short-code access for station scoring", () => {
   expect(screen.queryByRole("button", {
     name: "Войти через учётную запись держателя площадки",
   })).toBeNull();
+});
+
+it("shows only the participant number in station lookup results", async () => {
+  mockVerifyAccessCode.mockResolvedValue({
+    access_token: "station-holder-token",
+    token_type: "bearer",
+    expires_at: "2026-11-18T12:00:00+00:00",
+    role: "station_operator",
+    event_id: event.id,
+    station,
+  });
+  mockLookupWithAccessCode.mockResolvedValue({
+    event_participant_id: 41,
+    registration_number: "000001",
+    already_scored: false,
+    score: null,
+  });
+  render(<ScoringPage />);
+
+  fireEvent.change(screen.getByLabelText("Код доступа площадки"), {
+    target: { value: "STAGE2X8" },
+  });
+  fireEvent.submit(screen.getByRole("button", { name: "Войти на площадку" }).closest("form")!);
+  fireEvent.change(await screen.findByLabelText("Шестизначный номер участника"), {
+    target: { value: "000001" },
+  });
+  fireEvent.submit(screen.getByRole("button", { name: "Найти" }).closest("form")!);
+
+  expect(
+    await screen.findByRole("heading", { name: "Номер участника 000001" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("Alex Example")).toBeNull();
 });
 
 it("registers a participant with a manual six-digit number and personal fields", async () => {

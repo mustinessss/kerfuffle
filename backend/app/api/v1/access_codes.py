@@ -424,4 +424,5 @@ def register_participant_with_access_code(
     _, code = access
     if code.role != "registrar" or code.station_id is not None:
         raise HTTPException(status_code=403, detail="Registrar access required")
-    return register_participant_record(code.event_id, payload, session)
+    participant = register_participant_record(code.event_id, payload, session)
+    return {"registration_number": participant["registration_number"]}

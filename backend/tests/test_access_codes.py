@@ -289,6 +289,7 @@ def test_registrar_code_is_event_scoped_and_can_register_participant(
                 first_name="New",
                 last_name="Participant",
                 phone="+70000000000",
+                workplace_or_study="Example school",
             ),
             route_sheet_id=sheet.id,
             registration_number="123456",
@@ -296,12 +297,19 @@ def test_registrar_code_is_event_scoped_and_can_register_participant(
         access,
         db_session,
     )
-    assert participant["registration_number"] == "123456"
-    assert participant["route_sheet_id"] == sheet.id
+    assert participant == {"registration_number": "123456"}
+    registration = db_session.query(EventParticipant).filter_by(
+        event_id=access_setup["event"].id,
+        registration_number="123456",
+    ).one()
+    assert registration.route_sheet_id == sheet.id
+    person = db_session.get(Person, registration.person_id)
+    assert person.phone == "+70000000000"
+    assert person.workplace_or_study == "Example school"
 
     with pytest.raises(HTTPException) as error:
         submit_score_with_access_code(
-            ScoreCreate(event_participant_id=participant["id"], points=2),
+            ScoreCreate(event_participant_id=registration.id, points=2),
             access,
             db_session,
         )
