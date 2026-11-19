@@ -3,7 +3,9 @@ set -euo pipefail
 umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMPOSE=(-f "$ROOT/deploy/compose.production.yaml" --env-file "$ROOT/deploy/.env.production")
+COMPOSE_FILE="${KERFUFFLE_COMPOSE_FILE:-$ROOT/deploy/compose.production.yaml}"
+ENV_FILE="${KERFUFFLE_ENV_FILE:-$ROOT/deploy/.env.production}"
+COMPOSE=(-f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 BACKUP_DIR="${KERFUFFLE_BACKUP_DIR:-$ROOT/deploy/backups}"
 mkdir -p "$BACKUP_DIR"
 chmod 0700 "$BACKUP_DIR"
@@ -14,7 +16,7 @@ FILE="${TMP_FILE%.partial}"
 trap 'rm -f -- "$TMP_FILE"' EXIT
 
 set -a
-source "$ROOT/deploy/.env.production"
+source "$ENV_FILE"
 set +a
 
 docker compose "${COMPOSE[@]}" exec -T db \

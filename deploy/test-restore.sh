@@ -8,7 +8,9 @@ fi
 
 BACKUP="$1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMPOSE=(-f "$ROOT/deploy/compose.production.yaml" --env-file "$ROOT/deploy/.env.production")
+COMPOSE_FILE="${KERFUFFLE_COMPOSE_FILE:-$ROOT/deploy/compose.production.yaml}"
+ENV_FILE="${KERFUFFLE_ENV_FILE:-$ROOT/deploy/.env.production}"
+COMPOSE=(-f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 TEST_DB="kerfuffle_restore_test_$(date -u +%Y%m%dT%H%M%SZ)_$$"
 TEST_DB_CREATED=0
 
@@ -33,7 +35,7 @@ if [[ -f "$BACKUP.sha256" ]]; then
 fi
 
 set -a
-source "$ROOT/deploy/.env.production"
+source "$ENV_FILE"
 set +a
 
 docker compose "${COMPOSE[@]}" exec -T db \
