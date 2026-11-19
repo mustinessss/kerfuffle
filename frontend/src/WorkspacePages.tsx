@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
 import { ApiError } from "./api";
-import { CopyLink } from "./CopyLink";
 import {
   createAccessCode,
   createEvent,
@@ -14,13 +13,14 @@ import {
   getAccessCodes,
   getEvents,
   getParticipants,
+  getRouteSheetsWithAccessCode,
   getRouteSheets,
   getEventScores,
-  inviteStaffAccount,
   getStations,
   lookupParticipant,
   lookupWithAccessCode,
   registerParticipant,
+  registerParticipantWithAccessCode,
   deleteRouteSheet,
   revokeAccessCode,
   submitScore,
@@ -33,7 +33,6 @@ import {
 import type {
   AccessCodeSummary,
   CurrentAccount,
-  CreatedInvitation,
   EventSummary,
   ParticipantLookup,
   RegisteredParticipant,
@@ -328,7 +327,6 @@ export function WorkspacePage() {
               </form>
             )}
           </section>
-          {account.is_system_admin && <StaffAccountProvisioningPanel />}
           {actionMessage && <p className="success-message" role="status">{actionMessage}</p>}
           {selectedEvent && (
             <>
@@ -393,53 +391,6 @@ export function WorkspacePage() {
   );
 }
 
-function StaffAccountProvisioningPanel() {
-  const [created, setCreated] = useState<CreatedInvitation | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    setSaving(true);
-    setError("");
-    setCreated(null);
-    try {
-      const email = String(form.get("email") ?? "").trim();
-      const invitation = await inviteStaffAccount(email);
-      setCreated(invitation);
-      formElement.reset();
-    } catch (requestError) {
-      setError(messageFor(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <section className="workspace-section">
-      <div className="workspace-section-heading">
-        <div><p className="eyebrow">УЧЁТНЫЕ ЗАПИСИ</p><h2>Приглашение держателя площадки</h2></div>
-      </div>
-      <form className="workspace-form event-create-form" onSubmit={(event) => void handleSubmit(event)}>
-        <label>Email держателя площадки<input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
-        <button className="primary-button" disabled={saving}>{saving ? "Создаём приглашение…" : "Создать приглашение"}</button>
-      </form>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {created && (
-        <div className="workspace-card credential-card" role="status">
-          <strong>Приглашение создано для {created.email}</strong>
-          {created.delivery_method === "email"
-            ? <p>Приглашение отправлено по email. Ссылка действует 24 часа.</p>
-            : <div><p>Ссылка действует 24 часа. Передавайте её по доверенному каналу.</p>{created.invitation_url && <CopyLink url={created.invitation_url} />}</div>}
-          <button className="quiet-button" onClick={() => setCreated(null)}>Скрыть данные</button>
-        </div>
-      )}
-    </section>
-  );
-}
-
 function AccessCodesPanel({
   eventId,
   accessToken,
@@ -450,8 +401,7 @@ function AccessCodesPanel({
   stations: StationSummary[];
 }) {
   const [codes, setCodes] = useState<AccessCodeSummary[]>([]);
-  const [createdCode, setCreatedCode] = useState("");
-  const role: AccessCodeSummary["role"] = "station_operator";
+  const [role, setRole] = useState<AccessCodeSummary["role"]>("station_operator");
   const [stationId, setStationId] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -473,21 +423,19 @@ function AccessCodesPanel({
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!stationId) {
-      setError("Выберите площадку для кода сотрудника.");
+    if (role === "station_operator" && !stationId) {
+      setError("Выберите площадку для кода держателя.");
       return;
     }
     setBusy(true);
     setError("");
-    setCreatedCode("");
     try {
       const created = await createAccessCode(eventId, accessToken, {
         role,
         code: code.trim().toUpperCase(),
-        station_id: Number(stationId),
+        station_id: role === "station_operator" ? Number(stationId) : null,
       });
       setCodes((current) => [created, ...current]);
-      setCreatedCode(created.code ?? "");
       setCode("");
     } catch (requestError) {
       setError(requestError instanceof ApiError && requestError.status === 409
@@ -504,9 +452,8 @@ function AccessCodesPanel({
     try {
       await revokeAccessCode(codeId, accessToken);
       setCodes((current) => current.map((code) =>
-        code.id === codeId ? { ...code, is_active: false } : code,
+        code.id === codeId ? { ...code, is_active: false, code: undefined } : code,
       ));
-      setCreatedCode("");
     } catch (requestError) {
       setError(messageFor(requestError));
     } finally {
@@ -521,13 +468,26 @@ function AccessCodesPanel({
       </div>
       <form className="workspace-form create-station-form" onSubmit={(event) => void handleCreate(event)}>
         <h3>Выпустить код</h3>
-        <label>Площадка
-          <select value={stationId} required onChange={(event) => setStationId(event.target.value)}>
-            <option value="">Выберите площадку</option>
-            {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
+        <label>Тип доступа
+          <select value={role} onChange={(event) => {
+            setRole(
+              event.target.value === "registrar" ? "registrar" : "station_operator",
+            );
+            setStationId("");
+          }}>
+            <option value="station_operator">Держатель площадки</option>
+            <option value="registrar">Регистратор мероприятия</option>
           </select>
         </label>
-        <label>Подпись — она же код для входа
+        {role === "station_operator" && (
+          <label>Площадка
+            <select value={stationId} required onChange={(event) => setStationId(event.target.value)}>
+              <option value="">Выберите площадку</option>
+              {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
+            </select>
+          </label>
+        )}
+        <label>Код доступа
           <input
             value={code}
             onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 16))}
@@ -540,24 +500,24 @@ function AccessCodesPanel({
           />
         </label>
         <p className="access-code-hint">8–16 символов: латинские буквы и цифры 2–9. Буквы I/O и цифры 0/1 исключены, регистр не важен. Не используйте название мероприятия или площадки.</p>
-        <button className="primary-button" disabled={busy || code.length < 8 || stations.length === 0}>{busy ? "Сохраняем…" : "Создать код"}</button>
+        <button className="primary-button" disabled={busy || code.length < 8 || (role === "station_operator" && stations.length === 0)}>{busy ? "Сохраняем…" : "Создать код"}</button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
-      {createdCode && (
-        <div className="workspace-card credential-card" role="status">
-          <strong>Сохраните код сейчас</strong>
-          <p>Полный код больше не будет показан. Он действует без ограничения по сроку и числу входов, пока вы его не отключите.</p>
-          <code className="access-code-value">{createdCode}</code>
-          <button className="quiet-button" onClick={() => setCreatedCode("")}>Скрыть код</button>
-        </div>
-      )}
       <div className="access-code-list">
         {codes.map((code) => (
           <article className="workspace-card access-code-row" key={code.id}>
             <div>
               <strong>{code.label}</strong>
-              <span>Площадка: {code.station_name ?? "не указана"}</span>
+              <span>{code.role === "registrar" ? "Доступ: регистрация участников мероприятия" : `Площадка: ${code.station_name ?? "не указана"}`}</span>
               <small>{code.is_active ? "Активен" : "Отключён"}</small>
+              {code.is_active && code.code && (
+                <div className="credential-card">
+                  <code className="access-code-value">{code.code}</code>
+                </div>
+              )}
+              {code.is_active && !code.code && (
+                <small>Код выдан до обновления и недоступен. Создайте новый и отключите прежний.</small>
+              )}
             </div>
             {code.is_active && <button className="quiet-button" disabled={busy} onClick={() => void handleRevoke(code.id)}>Отключить</button>}
           </article>
@@ -813,12 +773,14 @@ function RegisterParticipantForm({
   eventId,
   accessToken,
   routeSheets,
+  isAccessCode = false,
   onRegistered,
   onError,
 }: {
   eventId: number;
   accessToken: string;
   routeSheets: RouteSheetSummary[];
+  isAccessCode?: boolean;
   onRegistered: () => void;
   onError: (message: string) => void;
 }) {
@@ -835,12 +797,28 @@ function RegisterParticipantForm({
     setRegisteredNumber("");
     onError("");
     try {
-      const participant = await registerParticipant(eventId, accessToken, {
+      const person = {
         first_name: String(form.get("firstName") ?? "").trim(),
         last_name: String(form.get("lastName") ?? "").trim(),
         workplace_or_study: String(form.get("workplaceOrStudy") ?? "").trim(),
         phone: String(form.get("phone") ?? "").trim(),
-      }, Number(form.get("routeSheetId")) || null, String(form.get("registrationNumber") ?? "").trim());
+      };
+      const routeSheetId = Number(form.get("routeSheetId")) || null;
+      const registrationNumber = String(form.get("registrationNumber") ?? "").trim();
+      const participant = isAccessCode
+        ? await registerParticipantWithAccessCode(
+            accessToken,
+            person,
+            routeSheetId,
+            registrationNumber,
+          )
+        : await registerParticipant(
+            eventId,
+            accessToken,
+            person,
+            routeSheetId,
+            registrationNumber,
+          );
       setRegisteredNumber(participant.registration_number);
       formElement.reset();
       onRegistered();
@@ -1075,6 +1053,7 @@ function RouteSheetForm({
 
 export function RegistrationPage() {
   const { user } = useAuth();
+  const [account, setAccount] = useState<CurrentAccount | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
@@ -1085,10 +1064,18 @@ export function RegistrationPage() {
   useEffect(() => {
     if (!user?.is_system_admin) return;
     const controller = new AbortController();
-    getEvents("", controller.signal)
-      .then((result) => {
+    Promise.all([
+      getCurrentAccount("", controller.signal),
+      getEvents("", controller.signal),
+    ])
+      .then(([nextAccount, result]) => {
+        setAccount(nextAccount);
         setEvents(result);
-        setSelectedEventId(result[0]?.id ?? null);
+        setSelectedEventId((current) =>
+          current && result.some((event) => event.id === current)
+            ? current
+            : result[0]?.id ?? null,
+        );
       })
       .catch((requestError: unknown) => {
         if (!controller.signal.aborted) setError(messageFor(requestError));
@@ -1119,14 +1106,19 @@ export function RegistrationPage() {
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const visibleRouteSheets = loadedEventId === selectedEventId ? routeSheets : [];
-  const loading = Boolean(user?.is_system_admin) && !eventsLoaded;
+  const canRegister = account?.is_system_admin === true;
+  const loading = Boolean(user) && !eventsLoaded;
+
+  if (!user?.is_system_admin) {
+    return <RegistrarCodeRegistrationPage />;
+  }
 
   return (
-    <AuthenticatedPage title="Регистрация участника" description="Системный администратор регистрирует участников и задаёт их шестизначные номера.">
+    <AuthenticatedPage title="Регистрация участника" description="Системный администратор регистрирует участников. Регистратор входит по выданному коду.">
       {loading && <AuthLoading />}
-      {user && !user.is_system_admin && <p className="form-error" role="alert">Регистрация доступна только системному администратору.</p>}
+      {user && !canRegister && <p className="form-error" role="alert">Регистрация доступна только системному администратору или назначенному регистратору этого мероприятия.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      {!loading && user?.is_system_admin && (
+      {!loading && canRegister && (
         <>
           {selectedEvent && (
             <label className="event-select-label">Мероприятие
@@ -1151,6 +1143,96 @@ export function RegistrationPage() {
         </>
       )}
     </AuthenticatedPage>
+  );
+}
+
+function RegistrarCodeRegistrationPage() {
+  const [code, setCode] = useState("");
+  const [access, setAccess] = useState<VerifiedAccess | null>(null);
+  const [routeSheets, setRouteSheets] = useState<RouteSheetSummary[]>([]);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorking(true);
+    setError("");
+    try {
+      const verified = await verifyAccessCode(code.trim());
+      if (verified.role !== "registrar" || verified.station) {
+        setError("Этот код не предназначен для регистрации участников.");
+        return;
+      }
+      const sheets = await getRouteSheetsWithAccessCode(verified.access_token);
+      setAccess(verified);
+      setRouteSheets(sheets);
+      setCode("");
+    } catch (requestError) {
+      setError(messageFor(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function refreshRouteSheets() {
+    if (!access) return;
+    try {
+      setRouteSheets(await getRouteSheetsWithAccessCode(access.access_token));
+    } catch (requestError) {
+      setError(messageFor(requestError));
+    }
+  }
+
+  return (
+    <main className="workspace-page">
+      <WorkspaceHeading
+        title="Регистрация участников"
+        description="Введите код регистратора, выданный администратором."
+      />
+      {!access ? (
+        <form className="workspace-card access-entry-form" onSubmit={(event) => void handleVerify(event)}>
+          <label htmlFor="registrar-access-code">Код регистратора</label>
+          <input
+            id="registrar-access-code"
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            required
+            minLength={8}
+            maxLength={16}
+            autoComplete="off"
+          />
+          <button className="primary-button" disabled={working}>
+            {working ? "Проверяем…" : "Войти как регистратор"}
+          </button>
+        </form>
+      ) : (
+        <>
+          <section className="workspace-card scoring-controls">
+            <div><span className="eyebrow">ДОСТУП РЕГИСТРАТОРА</span><strong>Мероприятие №{access.event_id}</strong></div>
+            <button
+              className="quiet-button"
+              disabled={working}
+              onClick={() => {
+                setAccess(null);
+                setRouteSheets([]);
+                setError("");
+              }}
+            >
+              Выйти
+            </button>
+          </section>
+          <RegisterParticipantForm
+            eventId={access.event_id}
+            accessToken={access.access_token}
+            routeSheets={routeSheets}
+            isAccessCode
+            onRegistered={() => void refreshRouteSheets()}
+            onError={setError}
+          />
+        </>
+      )}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </main>
   );
 }
 

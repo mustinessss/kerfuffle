@@ -279,11 +279,12 @@ class EventAccess(Base):
     __tablename__ = "event_access"
     __table_args__ = (
         CheckConstraint(
-            "role = 'station_operator' AND station_id IS NOT NULL",
-            name="access_station_required_for_operator",
+            "(role = 'station_operator' AND station_id IS NOT NULL)"
+            " OR (role = 'registrar' AND station_id IS NULL)",
+            name="access_station_required_for_scoped_role",
         ),
         CheckConstraint(
-            "role = 'station_operator'",
+            "role IN ('station_operator', 'registrar')",
             name="event_access_valid_role",
         ),
         ForeignKeyConstraint(
@@ -392,7 +393,8 @@ class AccessCode(Base):
     __tablename__ = "access_codes"
     __table_args__ = (
         CheckConstraint(
-            "role = 'station_operator' AND station_id IS NOT NULL",
+            "(role = 'station_operator' AND station_id IS NOT NULL)"
+            " OR (role = 'registrar' AND station_id IS NULL)",
             name="access_codes_valid_scope",
         ),
         ForeignKeyConstraint(
@@ -415,6 +417,7 @@ class AccessCode(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     secret_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    encrypted_code: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )

@@ -60,6 +60,11 @@ def test_station_operator_access_is_unique_per_station():
         indexes["event_access_operator_station_unique"]
         .dialect_options["postgresql"]["where"]
     ) == "role = 'station_operator'"
+    constraint_names = {
+        constraint.name for constraint in models.EventAccess.__table__.constraints
+    }
+    assert "access_station_required_for_scoped_role" in constraint_names
+    assert "event_access_valid_role" in constraint_names
     assert "organizer" not in str(
         models.EventAccess.__table__.constraints
     )

@@ -12,10 +12,13 @@ from app.api.v1.access_codes import (
     create_access_code,
     get_access_session,
     list_access_codes,
+    list_route_sheets_with_access_code,
+    register_participant_with_access_code,
     revoke_access_code,
     submit_score_with_access_code,
     verify_access_code,
 )
+from app.api.v1.participants import ParticipantCreate, PersonCreate
 from app.api.v1.scores import ScoreCreate
 from app.core.config import Settings
 from app.db.models import (
@@ -26,6 +29,8 @@ from app.db.models import (
     Person,
     Score,
     Station,
+    RouteSheet,
+    RouteSheetStation,
     User,
 )
 from app.db.session import Base
@@ -130,7 +135,7 @@ def session_for(db_session, access_token):
     )
 
 
-def test_codes_are_hashed_listed_without_secret_and_disabled_by_admin(
+def test_codes_are_hashed_encrypted_and_revealed_to_admin_until_disabled(
     db_session, access_setup
 ):
     created = issue_code(db_session, access_setup)
@@ -138,6 +143,7 @@ def test_codes_are_hashed_listed_without_secret_and_disabled_by_admin(
     stored = db_session.get(AccessCode, created["id"])
     assert created["code"]
     assert stored.secret_hash != created["code"]
+    assert stored.encrypted_code != created["code"]
     assert stored.label == "Код площадки"
     assert created["code"] == "REGA2TR8"
     assert created["is_active"] is True
@@ -145,15 +151,43 @@ def test_codes_are_hashed_listed_without_secret_and_disabled_by_admin(
         access_setup["event"].id,
         access_setup["organizer"],
         db_session,
-    ) == [{key: value for key, value in created.items() if key != "code"}]
+        settings(),
+    ) == [created]
 
     revoked = revoke_access_code(
         created["id"], access_setup["organizer"], db_session
     )
     assert revoked["is_active"] is False
+    revoked_list = list_access_codes(
+        access_setup["event"].id,
+        access_setup["organizer"],
+        db_session,
+        settings(),
+    )
+    assert revoked_list[0]["code"] is None
     with pytest.raises(HTTPException) as error:
         verify(db_session, created["code"])
     assert error.value.status_code == 400
+
+
+def test_only_system_admin_can_read_access_codes(db_session, access_setup):
+    issue_code(db_session, access_setup)
+    participant_user = User(
+        legacy_identity_subject="participant-user",
+        display_name="Participant",
+        is_system_admin=False,
+    )
+    db_session.add(participant_user)
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as error:
+        list_access_codes(
+            access_setup["event"].id,
+            participant_user,
+            db_session,
+            settings(),
+        )
+    assert error.value.status_code == 403
 
 
 def test_access_code_is_case_insensitive_and_cannot_be_reused(
@@ -212,6 +246,81 @@ def test_station_code_is_already_scoped_and_checks_server_score_scale(
             db_session,
         )
     assert error.value.status_code == 409
+
+
+def test_registrar_code_is_event_scoped_and_can_register_participant(
+    db_session, access_setup
+):
+    sheet = RouteSheet(
+        event_id=access_setup["event"].id,
+        name="North route",
+        capacity=2,
+    )
+    db_session.add(sheet)
+    db_session.flush()
+    db_session.add(
+        RouteSheetStation(
+            route_sheet_id=sheet.id,
+            event_id=access_setup["event"].id,
+            station_id=access_setup["station"].id,
+        )
+    )
+    db_session.commit()
+
+    created = issue_code(
+        db_session,
+        access_setup,
+        role="registrar",
+        code="REG2STR8",
+    )
+    assert created["role"] == "registrar"
+    assert created["station_id"] is None
+    assert created["label"] == "Код регистратора"
+    grant = verify(db_session, created["code"])
+    assert grant["role"] == "registrar"
+    assert grant["station"] is None
+    access = session_for(db_session, grant["access_token"])
+
+    sheets = list_route_sheets_with_access_code(access, db_session)
+    assert [item["name"] for item in sheets] == ["North route"]
+    participant = register_participant_with_access_code(
+        ParticipantCreate(
+            person=PersonCreate(
+                first_name="New",
+                last_name="Participant",
+                phone="+70000000000",
+            ),
+            route_sheet_id=sheet.id,
+            registration_number="123456",
+        ),
+        access,
+        db_session,
+    )
+    assert participant["registration_number"] == "123456"
+    assert participant["route_sheet_id"] == sheet.id
+
+    with pytest.raises(HTTPException) as error:
+        submit_score_with_access_code(
+            ScoreCreate(event_participant_id=participant["id"], points=2),
+            access,
+            db_session,
+        )
+    assert error.value.status_code == 403
+
+
+def test_registrar_code_cannot_be_scoped_to_station(db_session, access_setup):
+    with pytest.raises(ValidationError):
+        create_access_code(
+            access_setup["event"].id,
+            AccessCodeCreate(
+                role="registrar",
+                station_id=access_setup["station"].id,
+                code="REG2STR8",
+            ),
+            access_setup["organizer"],
+            db_session,
+            settings(),
+        )
 
 
 def test_revoking_code_invalidates_existing_sessions(db_session, access_setup):

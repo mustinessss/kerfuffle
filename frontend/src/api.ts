@@ -76,19 +76,19 @@ export interface AccessCodeSummary {
   event_id: number;
   station_id: number | null;
   station_name: string | null;
-  role: "station_operator";
+  role: "station_operator" | "registrar";
   label: string;
   is_active: boolean;
   created_at: string;
   revoked_at: string | null;
-  code?: string;
+  code?: string | null;
 }
 
 export interface VerifiedAccess {
   access_token: string;
   token_type: "bearer";
   expires_at: string;
-  role: "station_operator";
+  role: "station_operator" | "registrar";
   event_id: number;
   station: {
     id: number;
@@ -429,6 +429,35 @@ export function verifyAccessCode(code: string) {
   return requestJson<VerifiedAccess>("/public/access/verify", {
     method: "POST",
     body: { code },
+  });
+}
+
+export function getRouteSheetsWithAccessCode(accessToken: string, signal?: AbortSignal) {
+  return requestJson<RouteSheetSummary[]>("/public/access/route-sheets", {
+    accessToken,
+    signal,
+  });
+}
+
+export function registerParticipantWithAccessCode(
+  accessToken: string,
+  person: {
+    first_name: string;
+    last_name: string;
+    workplace_or_study: string;
+    phone: string;
+  },
+  routeSheetId: number | null,
+  registrationNumber: string,
+) {
+  return requestJson<RegisteredParticipant>("/public/access/participants", {
+    accessToken,
+    method: "POST",
+    body: {
+      person,
+      route_sheet_id: routeSheetId,
+      registration_number: registrationNumber,
+    },
   });
 }
 

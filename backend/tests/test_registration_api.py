@@ -26,6 +26,7 @@ from app.db.models import (
     EventAccess,
     EventParticipant,
     Person,
+    RouteSheet,
     Score,
     Station,
     User,

@@ -1,9 +1,11 @@
+import base64
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
 import re
 import secrets
 
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -17,6 +19,8 @@ from app.api.v1.scores import (
     create_score_record,
     lookup_participant_record,
 )
+from app.api.v1.participants import ParticipantCreate, register_participant_record
+from app.api.v1.route_sheets import list_route_sheets_for_event
 from app.core.auth import get_current_user
 from app.core.config import Settings, get_settings
 from app.core.permissions import require_system_admin
@@ -52,7 +56,7 @@ def normalize_access_code(value: str) -> str:
 class AccessCodeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: str = Field(pattern="^station_operator$")
+    role: str = Field(pattern="^(station_operator|registrar)$")
     code: str = Field(min_length=8, max_length=16, pattern=ACCESS_CODE_REGEX)
     station_id: int | None = Field(default=None, gt=0)
 
@@ -65,8 +69,10 @@ class AccessCodeCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_role_scope(self):
-        if self.station_id is None:
+        if self.role == "station_operator" and self.station_id is None:
             raise ValueError("A station code must name exactly one station")
+        if self.role == "registrar" and self.station_id is not None:
+            raise ValueError("A registrar code must be scoped to the event")
         return self
 
 
@@ -90,6 +96,29 @@ class AccessCodeVerification(BaseModel):
 
 def _secret_hash(value: str, secret: str) -> str:
     return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def _encryption_key(secret: str) -> bytes:
+    key = hmac.new(
+        secret.encode(),
+        b"kerfuffle-access-code-encryption-v1",
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(key)
+
+
+def _encrypt_access_code(value: str, secret: str) -> str:
+    return Fernet(_encryption_key(secret)).encrypt(value.encode()).decode()
+
+
+def _decrypt_access_code(value: str, secret: str) -> str:
+    try:
+        return Fernet(_encryption_key(secret)).decrypt(value.encode()).decode()
+    except (InvalidToken, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Access-code storage key is invalid",
+        ) from exc
 
 
 def _required_secret(settings: Settings) -> str:
@@ -156,12 +185,13 @@ def get_access_session(
 
 @router.get(
     "/events/{event_id}/access-codes",
-    summary="Список кодов доступа держателей площадок",
+    summary="Список кодов доступа команды",
 )
 def list_access_codes(
     event_id: int,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     if session.get(Event, event_id) is None:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -172,13 +202,23 @@ def list_access_codes(
         .where(AccessCode.event_id == event_id)
         .order_by(AccessCode.created_at.desc(), AccessCode.id.desc())
     )
-    return [access_code_response(code, station_name) for code, station_name in rows]
+    secret = _required_secret(settings)
+    responses = []
+    for code, station_name in rows:
+        response = access_code_response(code, station_name)
+        response["code"] = (
+            _decrypt_access_code(code.encrypted_code, secret)
+            if code.is_active and code.encrypted_code is not None
+            else None
+        )
+        responses.append(response)
+    return responses
 
 
 @router.post(
     "/events/{event_id}/access-codes",
     status_code=status.HTTP_201_CREATED,
-    summary="Создать код доступа держателя площадки",
+    summary="Создать код доступа команды",
 )
 def create_access_code(
     event_id: int,
@@ -208,8 +248,9 @@ def create_access_code(
         station_id=payload.station_id,
         created_by_user_id=user.id,
         role=payload.role,
-        label="Код площадки",
+        label="Код площадки" if payload.role == "station_operator" else "Код регистратора",
         secret_hash=secret_hash,
+        encrypted_code=_encrypt_access_code(raw_code, secret),
     )
     session.add(access_code)
     try:
@@ -353,3 +394,33 @@ def submit_score_with_access_code(
     if code.role != "station_operator" or code.station_id is None:
         raise HTTPException(status_code=403, detail="Station access required")
     return create_score_record(code.station_id, payload, session)
+
+
+@router.get(
+    "/public/access/route-sheets",
+    summary="Получить маршрутные листы по коду регистратора",
+)
+def list_route_sheets_with_access_code(
+    access: tuple[AccessSession, AccessCode] = Depends(get_access_session),
+    session: Session = Depends(get_db),
+):
+    _, code = access
+    if code.role != "registrar" or code.station_id is not None:
+        raise HTTPException(status_code=403, detail="Registrar access required")
+    return list_route_sheets_for_event(code.event_id, session)
+
+
+@router.post(
+    "/public/access/participants",
+    status_code=status.HTTP_201_CREATED,
+    summary="Зарегистрировать участника по коду регистратора",
+)
+def register_participant_with_access_code(
+    payload: ParticipantCreate,
+    access: tuple[AccessSession, AccessCode] = Depends(get_access_session),
+    session: Session = Depends(get_db),
+):
+    _, code = access
+    if code.role != "registrar" or code.station_id is not None:
+        raise HTTPException(status_code=403, detail="Registrar access required")
+    return register_participant_record(code.event_id, payload, session)

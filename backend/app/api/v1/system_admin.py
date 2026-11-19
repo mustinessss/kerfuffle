@@ -288,7 +288,6 @@ def revoke_invitation(
         session.commit()
     return {"ok": True}
 
-
 @router.post("/invitations/{invitation_id}/resend", status_code=status.HTTP_201_CREATED)
 def resend_invitation(
     invitation_id: int,

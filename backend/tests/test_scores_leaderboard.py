@@ -1,8 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from threading import Barrier
+from uuid import uuid4
+import os
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.leaderboard import list_public_events, read_public_leaderboard
@@ -13,6 +17,7 @@ from app.api.v1.scores import (
     ScoreUpdate,
     annul_score,
     create_score,
+    create_score_record,
     list_event_scores,
     lookup_participant,
     update_score,
@@ -468,6 +473,91 @@ def test_annulled_score_is_excluded_from_public_leaderboard(
     assert first["total_points"] == 0
     assert first["stations_completed"] == 0
     assert first["stations"][0]["points"] is None
+
+
+@pytest.mark.skipif(
+    not os.environ.get("KERFUFFLE_TEST_POSTGRES_URL"),
+    reason="Set KERFUFFLE_TEST_POSTGRES_URL to a disposable PostgreSQL test database",
+)
+def test_postgresql_concurrent_score_insert_is_unique():
+    database_url = os.environ["KERFUFFLE_TEST_POSTGRES_URL"]
+    schema_name = f"score_test_{uuid4().hex}"
+    admin_engine = create_engine(database_url)
+    engine = None
+    try:
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(f'CREATE SCHEMA "{schema_name}"')
+        engine = create_engine(
+            database_url,
+            connect_args={"options": f"-csearch_path={schema_name}"},
+            pool_size=4,
+        )
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            event_record = Event(name="Concurrent score", event_date=date(2026, 11, 18))
+            person = Person(first_name="Concurrent", last_name="Participant")
+            session.add_all([event_record, person])
+            session.flush()
+            station = Station(
+                event_id=event_record.id,
+                name="Single station",
+                score_min=0,
+                score_max=10,
+                score_step=1,
+            )
+            session.add(station)
+            session.flush()
+            registration = EventParticipant(
+                event_id=event_record.id,
+                person_id=person.id,
+                registration_number="000001",
+            )
+            session.add(registration)
+            session.commit()
+            station_id = station.id
+            registration_id = registration.id
+
+        barrier = Barrier(2)
+
+        def submit_score(_: int) -> int:
+            with Session(engine) as session:
+                barrier.wait(timeout=10)
+                try:
+                    create_score_record(
+                        station_id,
+                        ScoreCreate(
+                            event_participant_id=registration_id,
+                            points=7,
+                        ),
+                        session,
+                    )
+                except HTTPException as error:
+                    return error.status_code
+                return 201
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(submit_score, range(2)))
+
+        assert sorted(results) == [201, 409]
+        with Session(engine) as session:
+            score_count = session.scalar(
+                select(func.count()).select_from(Score)
+            )
+            assert score_count == 1
+            assert session.scalar(
+                select(Score.points).where(
+                    Score.event_participant_id == registration_id,
+                    Score.station_id == station_id,
+                )
+            ) == 7
+    finally:
+        if engine is not None:
+            engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'
+            )
+        admin_engine.dispose()
 
 
 def test_public_leaderboard_supports_route_sheet_and_counts_off_route_scores(
